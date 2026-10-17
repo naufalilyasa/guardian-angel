@@ -1,0 +1,19 @@
+{
+  "name": "guardian-angel-poc",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "ga": "./src/cli/ga.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit",
+    "ga": "bun run src/cli/ga.ts"
+  },
+  "devDependencies": {
+    "@code-yeongyu/senpi": "2026.10.16",
+    "bun-types": "^1.4.3",
+    "typebox": "^1.4.2"
+  }
+}
