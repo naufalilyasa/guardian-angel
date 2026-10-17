@@ -1,8 +1,10 @@
 # guardian-angel — guard + undo untuk Senpi/OMO Native
 
-Guard deterministik sebelum tool call dieksekusi, dengan **undo berbasis trash** sebagai jaring pengaman utama. Fase 1 menargetkan Senpi/OMO Native; harness lain menyusul setelah core terbukti.
+Guard deterministik sebelum tool call dieksekusi, dengan **undo berbasis trash** sebagai jaring pengaman utama. Fase 1 menargetkan Senpi/OMO Native.
 
 **Bukan sandbox, bukan security boundary.** Menargetkan kesalahan agent + prompt injection oportunistik. Saat classifier error: pola destruktif fail-closed, sisanya fail-open + log.
+
+**Status: POC v0.0.1** — core, adapter Senpi, CLI, dan test suite sudah berjalan. Lihat "Batas POC" di bawah untuk yang belum ada.
 
 ## Posisi
 
@@ -10,11 +12,9 @@ Guard bawaan Senpi (permission system) adalah confirmation policy per-call tanpa
 
 guardian-angel mengisi ruang yang kosong:
 
-- **Undo/trash** untuk aksi destruktif (checkpoint Claude Code pun tidak melacak file yang diubah lewat bash)
-- **Cakupan SQL** (SELECT allow, DROP/TRUNCATE block, DELETE/UPDATE ask)
+- **Undo/trash** untuk aksi destruktif
+- **Cakupan SQL** (SELECT allow, DROP/TRUNCATE/ALTER block, DELETE/UPDATE ask)
 - **Approval per-Scope** (path + sesi), bukan per-call
-
-Yang **bukan** target: menang di akurasi parsing shell. Obfuscation ditangani best-effort dan dicatat di corpus redteam.
 
 ## Arsitektur
 
@@ -28,92 +28,119 @@ Agent tool call (Senpi)
 └────────┬─────────┘
          ▼
 ┌──────────────────┐
-│ src/core/        │  DETERMINISTIK (pure code, mikrodetik, tanpa LLM di jalur keputusan)
+│ src/core/        │  DETERMINISTIK (pure code, tanpa LLM di jalur keputusan)
 │ classifier.ts    │  → allow | ask (per Scope) | block (hard)
+│ sql.ts           │  ruleset SQL per-client
+│ policy.ts        │  config tier + builtin block yang tidak bisa diturunkan
 │ trash.ts         │  undo via trash (rename O(1), satu volume workspace)
-│ approvals.ts     │  approval per-proyek + TTL
-│ audit.ts         │  audit.jsonl
+│ approvals.ts     │  approval per-proyek + TTL 24 jam
+│ audit.ts         │  audit.jsonl + redaksi secret
+│ guard.ts         │  orkestrator: policy → classify → ask/block/rewrite → audit
 └──────────────────┘
 ```
 
-Aturan emas: core tidak pernah import code harness.
+Aturan emas: **core tidak pernah import code harness**.
 
 ## Tier
 
 | Tier   | Contoh | Perilaku |
 |--------|--------|----------|
-| allow  | `ls`, `cat`, `git status`, tulis di workspace | langsung jalan |
-| ask    | `DELETE`/`UPDATE` SQL, tulis di luar workspace, `git push` | approval per Scope, sekali saja |
-| block  | `rm -rf /`, `mkfs`, `curl \| bash`, `DROP TABLE`, `TRUNCATE` | ditolak, tidak bisa override |
+| allow  | `ls`, `cat`, `git status`, tulis di workspace, perintah tak dikenal | langsung jalan |
+| ask    | `DELETE`/`UPDATE` SQL, tulis di luar workspace, `git push`, `sudo` | approval per Scope, sekali saja |
+| block  | `rm -rf /`, `mkfs`, `curl \| bash`, `DROP`/`TRUNCATE`/`ALTER` | ditolak, tidak bisa override |
 
-Catatan: `ask` dipetakan per-harness. Senpi punya `ctx.ui.confirm` native; harness lain nanti memakai primitif terkuat yang tersedia.
+Default untuk perintah bash yang tidak cocok aturan apa pun adalah **allow** — guard ini menargetkan kesalahan, bukan menggantikan permission system.
 
 ## Undo (hybrid)
 
-- `rm` target tunggal yang terparse bersih → di-rewrite ke pemindahan Trash (O(1), tanpa copy data).
-- `rm` kompleks (glob, substitusi, pipe) → block + perintah pengganti siap-tempel.
-- `restore()` mengembalikan; `gc()` expire otomatis.
+- `rm` target tunggal yang terparse bersih → di-rewrite menjadi `ga trash <path>` (O(1), tanpa copy data).
+- `rm` kompleks (glob, substitusi, pipe, multi-target) → block + panduan `ga trash <path>` per target.
+- `restore()` mengembalikan; `gc()` menghapus item lebih tua dari 24 jam.
+
+## CLI `ga`
+
+```bash
+bun run ga trash <path>     # pindahkan ke trash, cetak id
+bun run ga restore --last   # pulihkan item terbaru
+bun run ga restore <id>     # pulihkan item tertentu
+bun run ga list             # isi trash
+bun run ga gc               # hapus item > 24 jam
+bun run ga status           # ringkasan store
+```
+
+Workspace resolution: `--workspace <path>` > `$GA_WORKSPACE` > `cwd`.
 
 ## Store
 
 ```
 <workspace>/.guardian-angel/
-  trash/          file terhapus (satu volume dengan workspace → bebas EXDEV)
-  approvals.json  approval per-proyek (TTL, bisa dicabut manual)
-  audit.jsonl     setiap Verdict block/ask
+  trash/<id>/          payload + meta.json (rename, satu volume)
+  approvals.json       approval per-proyek (TTL 24 jam)
+  audit.jsonl          setiap keputusan block/ask/rewrite
 ```
 
 Direktori ini di-.gitignore otomatis.
 
-## Struktur
+## Memasang adapter di Senpi
 
+```bash
+# dev / coba cepat
+senpi -e ./src/adapters/senpi.ts
+
+# pemakaian harian: salin atau symlink ke direktori auto-discovery
+~/.senpi/agent/extensions/
 ```
-src/
-  core/
-    types.ts       Tier, Verdict, Scope, PolicyConfig
-    classifier.ts  tokenizer + resolver path + rules file/bash + ruleset SQL
-    trash.ts       safeDelete / restore / gc / listTrash
-    approvals.ts   Scope + TTL
-    audit.ts       jsonl writer
-  adapters/
-    senpi.ts       extension pi.on("tool_call") — block / ask / rewrite hybrid
-  index.ts         public exports
-test/
-  classifier.test.ts  allow/ask/block + resolusi path
-  sandbox.test.ts     guard + trash di sandbox sekali pakai (canary files)
-  redteam.test.ts     bypass attempts: obfuscation, eval, pipe, sudo
+
+Adapter memetakan:
+
+- `block` → `{ block: true, reason }`
+- `ask` → `ctx.ui.confirm`; tanpa UI (`hasUI=false`) → block (fail-closed)
+- `replacement` → `event.input.command` dimutasi menjadi `bun run <pkg>/src/cli/ga.ts trash <path>`
+
+## Config tier
+
+`.guardian-angel/config.json`:
+
+```json
+{
+  "rules": [
+    { "match": { "tool": "bash", "command": "git push*" }, "tier": "ask", "reason": "remote write" }
+  ]
+}
 ```
+
+- Precedence: builtin < global (`$XDG_CONFIG_HOME/guardian-angel/config.json`) < project.
+- Dalam satu layer, **last match wins**; pola `*` di-anchor.
+- **Project tidak bisa menurunkan `block` bawaan** — hanya config global user yang boleh.
+- Config invalid diabaikan + warning, tidak membuat guard crash.
 
 ## Test: di VM terpisah, bukan di laptop
-
-Test berjalan di **VM Lima** (Ubuntu, ext4): repo di-mount **read-only** via virtiofs, salinan kerja hanya di `/tmp` VM yang menguap saat VM dimatikan. macOS tidak pernah menjalankan test destruktif.
 
 ```bash
 scripts/test-in-vm.sh
 ```
 
-Start pertama mengunduh image Ubuntu (~1GB) dan meng-install Bun di dalam VM; run berikutnya cepat.
+Script ini:
 
-Di dalam VM tetap berlaku sandbox sekali pakai: `mkdtemp` per test, `assertInSandbox(path)` fail-closed sebelum operasi destruktif, canary file, env `GA_*` di-override. Semua target `rm` di test adalah file dummy yang dibuat test itu sendiri, bukan file pengguna.
+1. memastikan VM Lima hidup,
+2. memverifikasi mount repo **read-only** (`touch` harus gagal),
+3. menyalin repo ke `/tmp/ga` di dalam VM,
+4. menjalankan `tsc --noEmit` dan `bun test`,
+5. memverifikasi canary `/tmp/ga-canary` tidak tersentuh.
 
-## Config tier
+macOS tidak pernah menjalankan test destruktif. Satu-satunya eksekusi di host adalah smoke adapter non-destruktif (`rm ./dummy.txt` di `mkdtemp`).
 
-`.guardian-angel/config.json` — aturan `{ match, tier, reason }`, last-match-wins. User bisa menambah/menimpa aturan. Aturan `block` bawaan tidak bisa diturunkan lewat config proyek (hanya config global user).
+## Batas POC (jujur)
 
-## Pre-LLM interception (opsional)
-
-Senpi: `context`, `context_with_system`, `before_provider_request`. OpenCode v1: `experimental.chat.system.transform`, `experimental.chat.messages.transform`. Temuan pre-LLM hanya menaikkan kewaspadaan + audit; keputusan destruktif tetap di choke point pre-tool-call.
-
-## Keterbatasan yang disadari (jujur)
-
-- Bukan parser shell POSIX penuh: ANSI-C quoting (`$'\x72\x6d'`), process substitution, dan arithmetic expansion belum di-handle → masuk corpus redteam, bukan dianggap aman.
-- `resolvePath` leksikal saja; symlink belum di-resolve.
-- Deteksi SQL berbasis pola dasar; bukan pengganti DB guard (tetap pakai transaksi + privilege DB).
-- Trash harus satu volume dengan workspace (EXDEV); fallback copy+delete belum ada.
-- MCP interception ditunda ke fase 2.
+- Bukan parser shell POSIX penuh. ANSI-C quoting, base64/eval, interpreter payload (`python3 -c`), `xargs`, `ssh`, dan path absolut (`/bin/rm`) **belum** tertangkap — semuanya tercatat sebagai `KNOWN BYPASS` di `test/fixtures/redteam.jsonl`.
+- `resolvePath` leksikal; symlink di **komponen path** ditolak fail-closed, tetapi symlink bukan sandbox.
+- Deteksi SQL berbasis pola; `-f/--file` dan redirect file selalu `ask` karena classifier murni tidak membaca file. Bukan pengganti DB guard.
+- Trash harus satu volume dengan workspace (EXDEV → error jelas, tanpa fallback copy+delete).
+- MCP interception, adapter OpenCode/Codex/Claude, LLM advisor, CoW snapshot, dan Windows belum ada.
+- Asumsi single-process: `approvals.json` tidak memakai lock lintas proses.
 
 ## Peta jalan
 
-1. Core (classifier + trash + approvals + audit) + adapter Senpi + sandbox/redteam tests
-2. Adapter OpenCode v1 (termasuk pemetaan ke permission config native) + pre-LLM interception opsional; v2 ditunda
+1. ✅ Core (classifier + SQL + policy + trash + approvals + audit + guard) + adapter Senpi + CLI + redteam corpus
+2. Adapter OpenCode v1 + pre-LLM interception opsional
 3. Adapter harness lain (Codex, Claude Code)
