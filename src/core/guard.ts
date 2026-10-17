@@ -3,8 +3,10 @@ import { classify } from "./classifier.ts";
 import { classifySql } from "./sql.ts";
 import { matchRule } from "./policy.ts";
 import { resolveLexical } from "./paths.ts";
+import { scopeKey } from "./approvals.ts";
 
-const DESTRUCTIVE_FALLBACK = /(rm\s+-[a-zA-Z]*[rR][a-zA-Z]*f|rm\s+-[a-zA-Z]*f[a-zA-Z]*\s+\/|mkfs|DROP\s|TRUNCATE\s|curl[^\n]*\|\s*(sh|bash))/i;
+const DESTRUCTIVE_FALLBACK =
+  /(\brm\s+(-{1,2}[a-zA-Z-]+\s+)*[^-\s]|\bshred\b|\bmkfs\b|\bdd\b[^\n]*of=\/dev\/|\bfind\b[^\n]*-delete\b|\bDROP\s|\bTRUNCATE\s|\bALTER\s|\bcurl\b[^\n]*\|\s*(sh|bash)|\bwget\b[^\n]*\|\s*(sh|bash)|:\s*\(\s*\)\s*\{)/i;
 
 const SEVERITY: Record<Tier, number> = { allow: 0, ask: 1, block: 2 };
 
@@ -40,7 +42,6 @@ function classifyWithPolicy(call: ToolCall, deps: GuardDeps): GuardResult {
   let reason = base.reason;
 
   if (policyMatch) {
-    const stricter = worst(verdict, policyMatch.tier);
     if (SEVERITY[policyMatch.tier] > SEVERITY[verdict]) {
       verdict = policyMatch.tier;
       reason = policyMatch.reason ?? `policy tier ${policyMatch.tier}`;
@@ -48,7 +49,6 @@ function classifyWithPolicy(call: ToolCall, deps: GuardDeps): GuardResult {
   }
 
   if (sql) {
-    const stricter = worst(verdict, sql.verdict);
     if (SEVERITY[sql.verdict] > SEVERITY[verdict]) {
       verdict = sql.verdict;
       reason = sql.reason ?? reason;
@@ -60,7 +60,7 @@ function classifyWithPolicy(call: ToolCall, deps: GuardDeps): GuardResult {
   }
 
   const result: GuardResult = { verdict, reason };
-  if (verdict === "allow" && base.replacement) result.replacement = base.replacement;
+  if (base.replacement) result.replacement = base.replacement;
   return result;
 }
 
@@ -110,7 +110,9 @@ export async function guard(
   if (result.verdict === "ask") {
     const scope = scopeFor(call, deps);
     if (deps.approvals.check(scope, now)) {
-      return { verdict: "allow", reason: "approval sudah ada untuk Scope ini" };
+      return result.replacement
+        ? { verdict: "allow", reason: "approval sudah ada untuk Scope ini", replacement: result.replacement }
+        : { verdict: "allow", reason: "approval sudah ada untuk Scope ini" };
     }
 
     const approved = await deps.confirm(
@@ -126,7 +128,7 @@ export async function guard(
         tool: call.toolName,
         tier: "block",
         reason: denied.reason,
-        scopeKey: `${scope.workspace}\u0000${scope.sessionId}\u0000${scope.scopePath}`,
+        scopeKey: scopeKey(scope),
         command: typeof call.input.command === "string" ? call.input.command : undefined,
       });
       return denied;
@@ -139,10 +141,12 @@ export async function guard(
       tool: call.toolName,
       tier: "ask",
       reason: result.reason,
-      scopeKey: `${scope.workspace}\u0000${scope.sessionId}\u0000${scope.scopePath}`,
+      scopeKey: scopeKey(scope),
       command: typeof call.input.command === "string" ? call.input.command : undefined,
     });
-    return { verdict: "allow", reason: "disetujui user" };
+    return result.replacement
+      ? { verdict: "allow", reason: "disetujui user", replacement: result.replacement }
+      : { verdict: "allow", reason: "disetujui user" };
   }
 
   if (result.replacement) {

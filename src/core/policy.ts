@@ -97,15 +97,6 @@ export function matchRule(
   return found;
 }
 
-function builtinTierFor(rule: PolicyRule): Tier | null {
-  const match = matchRule(BUILTIN_RULES, {
-    tool: rule.match.tool ?? "",
-    command: rule.match.command,
-    path: rule.match.path,
-  });
-  return match ? match.tier : null;
-}
-
 function patternCovers(candidate: string | undefined, target: string | undefined): boolean {
   if (candidate === undefined) return true;
   if (target === undefined) return false;

@@ -134,7 +134,15 @@ function tokenize(segment: string): string[] {
 }
 
 function classifyRm(segment: string, workspace: string): GuardResult | null {
-  const tokens = tokenize(segment);
+  let tokens = tokenize(segment);
+
+  while (tokens.length > 0 && (tokens[0] === "sudo" || tokens[0] === "command" || tokens[0] === "env" || tokens[0] === "nohup" || tokens[0] === "time")) {
+    tokens = tokens.slice(1);
+    while (tokens.length > 0 && (tokens[0].startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0]))) {
+      tokens = tokens.slice(1);
+    }
+  }
+
   if (tokens[0] !== "rm") return null;
 
   const operands: string[] = [];
@@ -186,6 +194,15 @@ function classifyRm(segment: string, workspace: string): GuardResult | null {
   };
 }
 
+const SEVERITY: Record<"allow" | "ask" | "block", number> = { allow: 0, ask: 1, block: 2 };
+
+function stricter(
+  a: { verdict: "allow" | "ask" | "block"; reason?: string; replacement?: { kind: "trash"; path: string } },
+  b: { verdict: "allow" | "ask" | "block"; reason?: string; replacement?: { kind: "trash"; path: string } },
+) {
+  return SEVERITY[b.verdict] > SEVERITY[a.verdict] ? b : a;
+}
+
 export function classify(input: ClassifierInput): GuardResult {
   const { call, workspace } = input;
 
@@ -219,16 +236,22 @@ export function classify(input: ClassifierInput): GuardResult {
   for (const { re, reason } of BLOCK_PATTERNS) {
     if (re.test(command)) return { verdict: "block", reason };
   }
-  for (const { re, reason } of ASK_PATTERNS) {
-    if (re.test(command)) return { verdict: "ask", reason };
-  }
 
-  for (const segment of splitSegments(command)) {
-    const rmResult = classifyRm(segment, workspace);
-    if (rmResult) {
-      if (rmResult.verdict !== "allow" || rmResult.replacement) return rmResult;
+  const rmResult = (() => {
+    for (const segment of splitSegments(command)) {
+      const result = classifyRm(segment, workspace);
+      if (result) return result;
+    }
+    return null;
+  })();
+
+  for (const { re, reason } of ASK_PATTERNS) {
+    if (re.test(command)) {
+      return rmResult ? stricter(rmResult, { verdict: "ask", reason }) : { verdict: "ask", reason };
     }
   }
+
+  if (rmResult) return rmResult;
 
   return { verdict: "allow", reason: "default allow" };
 }
