@@ -8,12 +8,13 @@
   },
   "scripts": {
     "test": "bun test",
-    "typecheck": "bunx tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "ga": "bun run src/cli/ga.ts"
   },
   "devDependencies": {
     "@code-yeongyu/senpi": "2026.10.16",
     "bun-types": "^1.4.3",
-    "typebox": "^1.4.2"
+    "typebox": "^1.4.2",
+    "typescript": "^5.9.3"
   }
 }

@@ -1,7 +1,16 @@
 export type Tier = "allow" | "ask" | "block";
 
+export type ToolName =
+  | "bash"
+  | "write"
+  | "edit"
+  | "read"
+  | "grep"
+  | "find"
+  | "ls";
+
 export type ToolCall = {
-  toolName: "bash" | "write" | "edit";
+  toolName: ToolName;
   input: Record<string, unknown>;
 };
 
