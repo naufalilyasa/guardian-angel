@@ -130,7 +130,7 @@ export function mergePolicy(layers: PolicyLayer[]): LoadedPolicy {
         rules.push({ ...rule, tier: "block" });
         continue;
       }
-      rules.push(rule);
+      rules.push(layer.source === "global" ? { ...rule, source: "global" } : rule);
     }
   }
 

@@ -20,6 +20,8 @@ export type PolicyRule = {
   match: { tool?: string; command?: string; path?: string };
   tier: Tier;
   reason?: string;
+  /** Set only by mergePolicy for rules originating from the user's global config. */
+  source?: "global";
 };
 
 export type PolicyConfig = { rules: PolicyRule[] };

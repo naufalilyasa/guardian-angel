@@ -41,17 +41,22 @@ function classifyWithPolicy(call: ToolCall, deps: GuardDeps): GuardResult {
   let verdict = base.verdict;
   let reason = base.reason;
 
-  if (policyMatch) {
-    if (SEVERITY[policyMatch.tier] > SEVERITY[verdict]) {
-      verdict = policyMatch.tier;
-      reason = policyMatch.reason ?? `policy tier ${policyMatch.tier}`;
+  if (policyMatch?.source === "global") {
+    verdict = policyMatch.tier;
+    reason = policyMatch.reason ?? `policy tier ${policyMatch.tier} (global)`;
+  } else {
+    if (policyMatch) {
+      if (SEVERITY[policyMatch.tier] > SEVERITY[verdict]) {
+        verdict = policyMatch.tier;
+        reason = policyMatch.reason ?? `policy tier ${policyMatch.tier}`;
+      }
     }
-  }
 
-  if (sql) {
-    if (SEVERITY[sql.verdict] > SEVERITY[verdict]) {
-      verdict = sql.verdict;
-      reason = sql.reason ?? reason;
+    if (sql) {
+      if (SEVERITY[sql.verdict] > SEVERITY[verdict]) {
+        verdict = sql.verdict;
+        reason = sql.reason ?? reason;
+      }
     }
   }
 
