@@ -225,9 +225,9 @@ Catatan: Wave 1, 3 adalah gerbang serial karena tipe/interface harus stabil sebe
 ## Final verification wave
 > Runs in parallel after ALL todos. ALL must APPROVE. Surface results and wait for the user's explicit okay before declaring complete.
 - [ ] F1. Plan compliance audit - verifikasi setiap todo `- [ ] N.` dieksekusi, tidak ada scope creep (tidak ada MCP/OpenCode/LLM advisor), dan semua file yang diklaim ada benar-benar ada. Evidence `.omo/evidence/f1-guardian-angel-poc-v0-0-1.md`
-- [ ] F2. Code quality review - `bunx tsc --noEmit` strict, tidak ada `any` tanpa alasan, core tidak mengimpor harness (grep `@code-yeongyu/senpi` hanya di `src/adapters/`), tidak ada `process.cwd()` di core. Evidence `.omo/evidence/f2-guardian-angel-poc-v0-0-1.md`
+- [x] F2. Code quality review - `bunx tsc --noEmit` strict, tidak ada `any` tanpa alasan, core tidak mengimpor harness (grep `@code-yeongyu/senpi` hanya di `src/adapters/`), tidak ada `process.cwd()` di core. Evidence `.omo/evidence/f2-guardian-angel-poc-v0-0-1.md`
 - [x] F3. Real manual QA - di VM: `scripts/test-in-vm.sh` hijau; `touch /mnt/guardian-angel/.ga-write-probe` gagal; `ga list`/`restore --last` bekerja pada file dummy; canary utuh. Evidence `.omo/evidence/f3-guardian-angel-poc-v0-0-1.md`
-- [ ] F4. Ideal-state fidelity - cek 1:1 setiap IS-1..IS-6 terhadap perilaku nyata di VM; setiap kekurangan menjadi todo baru `- [ ] N.`, bukan catatan. Evidence `.omo/evidence/f4-guardian-angel-poc-v0-0-1.md`
+- [x] F4. Ideal-state fidelity - cek 1:1 setiap IS-1..IS-6 terhadap perilaku nyata di VM; setiap kekurangan menjadi todo baru `- [ ] N.`, bukan catatan. Evidence `.omo/evidence/f4-guardian-angel-poc-v0-0-1.md`
 
 ## Commit strategy
 
