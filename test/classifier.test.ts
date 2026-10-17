@@ -189,6 +189,29 @@ describe("segment splitting", () => {
   });
 });
 
+describe("REGRESSION: ask triggers must not mask block-tier rm checks", () => {
+  test("sudo rm -rf outside workspace is blocked, not merely asked", () => {
+    expect(verdictOf("sudo rm -rf /tmp/outside").verdict).toBe("block");
+  });
+
+  test("sudo rm with a glob is blocked", () => {
+    expect(verdictOf("sudo rm *.log").verdict).toBe("block");
+  });
+
+  test("git push chained with an outside rm is blocked", () => {
+    expect(verdictOf("git push && rm -rf /tmp/outside").verdict).toBe("block");
+  });
+
+  test("a benign sudo command still only asks", () => {
+    expect(verdictOf("sudo apt update").verdict).toBe("ask");
+  });
+
+  test("a clean sudo rm inside the workspace asks first (sudo is not auto-approved)", () => {
+    const result = verdictOf("sudo rm ./build");
+    expect(result.verdict).toBe("ask");
+  });
+});
+
 describe("malformed input", () => {
   test("empty command is allowed", () => {
     expect(verdictOf("").verdict).toBe("allow");
