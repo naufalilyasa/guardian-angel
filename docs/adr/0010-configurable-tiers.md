@@ -1,0 +1,3 @@
+# Config tier allow/ask/block dapat diedit user
+
+Semua keputusan tier berasal dari satu file konfigurasi per proyek (`.guardian-angel/config.json`), berisi aturan berurutan `{ match, tier, reason }` dengan last-match-wins, dan user bisa menambah/menimpa aturan bawaan. Alasan: guard yang tidak bisa disesuaikan akan dimatikan user setelah false positive pertama; data nyata menunjukkan aturan DB/SQL sangat spesifik per proyek. Konsekuensi: `block` bawaan tetap tidak bisa diturunkan oleh config proyek (hanya bisa diperketat), supaya agent tidak bisa menulis config untuk melonggarkan guard; penurunan tier `block` hanya lewat config global milik user.

@@ -1,0 +1,3 @@
+# Pre-LLM interception sebagai lapis opsional
+
+Guard boleh memeriksa konteks sebelum dikirim ke provider LLM, tetapi hanya sebagai lapis opsional yang tidak pernah menjadi jalur keputusan utama. Senpi punya `context`, `context_with_system`, dan `before_provider_request` (bisa mengganti payload); OpenCode v2 punya `experimental.chat.system.transform` dan `experimental.chat.messages.transform`. Alasan: mencegat input LLM bisa mendeteksi instruksi berbahaya lebih awal, tetapi hook-nya experimental/rapuh dan tidak boleh memblokir seluruh turn karena false positive. Konsekuensi: temuan pre-LLM hanya menaikkan tier (misalnya menandai sesi sebagai waspada) atau menulis audit, bukan mengganti Verdict tool call; semua keputusan destruktif tetap di choke point pre-tool-call.

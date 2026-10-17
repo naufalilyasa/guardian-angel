@@ -1,0 +1,3 @@
+# Test hanya berjalan di sandbox sekali pakai
+
+Setiap test yang menyentuh filesystem berjalan di direktori disposable hasil `mkdtemp`; helper `assertInSandbox(path)` fail-closed sebelum setiap operasi destruktif, dan canary file di luar root diverifikasi tidak tersentuh. Alasan: test guard justru menjalankan operasi destruktif (`rm`, trash, restore), sehingga bug pada kode yang diuji tidak boleh bisa menghapus file nyata pengguna. Alternatif yang ditolak: mocking filesystem (tidak menguji perilaku rename/EXDEV sungguhan yang justru inti trash) dan menjalankan test di workspace nyata (risiko tidak dapat diterima).
