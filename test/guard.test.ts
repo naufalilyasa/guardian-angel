@@ -196,6 +196,30 @@ describe("fail policy", () => {
 });
 
 describe("policy integration", () => {
+  test("REGRESSION: a global allow overrides the classifier's builtin block end-to-end", async () => {
+    const { deps } = harness();
+    deps.policy = {
+      rules: [
+        { match: { tool: "bash", command: "rm -rf /*" }, tier: "allow", reason: "user override", source: "global" },
+      ],
+    };
+
+    const result = await guard(bash("rm -rf /"), deps);
+
+    expect(result.verdict).toBe("allow");
+    expect(result.reason).toBe("user override");
+  });
+
+  test("a project rule cannot lower the builtin block end-to-end", async () => {
+    const { deps } = harness();
+    deps.policy = {
+      rules: [{ match: { tool: "bash", command: "rm -rf /*" }, tier: "allow", reason: "local" }],
+    };
+
+    const result = await guard(bash("rm -rf /"), deps);
+
+    expect(result.verdict).toBe("block");
+  });
   test("a policy block wins over an allow", async () => {
     const { deps } = harness();
     deps.policy = {

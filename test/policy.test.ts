@@ -136,6 +136,35 @@ describe("mergePolicy", () => {
     expect(matchRule(merged.rules, { tool: "bash", command: "sudo ls" })?.tier).toBe("allow");
   });
 
+  test("REGRESSION: global rules are tagged so the guard can treat them as authoritative", () => {
+    const layers: PolicyLayer[] = [
+      { source: "builtin", config: { rules: BUILTIN_RULES } },
+      {
+        source: "global",
+        config: {
+          rules: [{ match: { tool: "bash", command: "rm -rf /*" }, tier: "allow" }],
+        },
+      },
+    ];
+    const merged = mergePolicy(layers);
+    const rule = matchRule(merged.rules, { tool: "bash", command: "rm -rf /" });
+    expect(rule?.tier).toBe("allow");
+    expect(rule?.source).toBe("global");
+  });
+
+  test("project rules are NOT tagged as global", () => {
+    const layers: PolicyLayer[] = [
+      { source: "builtin", config: { rules: BUILTIN_RULES } },
+      {
+        source: "project",
+        config: { rules: [{ match: { tool: "bash", command: "my-tool *" }, tier: "ask" }] },
+      },
+    ];
+    const merged = mergePolicy(layers);
+    const rule = matchRule(merged.rules, { tool: "bash", command: "my-tool x" });
+    expect(rule?.source).toBeUndefined();
+  });
+
   test("project may raise an ask to block", () => {
     const layers: PolicyLayer[] = [
       { source: "builtin", config: { rules: BUILTIN_RULES } },
