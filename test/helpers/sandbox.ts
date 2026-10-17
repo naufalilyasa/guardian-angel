@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertInSandbox } from "../src/core/paths.ts";
+import { assertInSandbox } from "../../src/core/paths.ts";
 
 export type Sandbox = {
   root: string;

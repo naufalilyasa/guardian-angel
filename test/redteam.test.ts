@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { classify } from "../src/core/classifier.ts";
+import type { Tier } from "../src/core/types.ts";
 
-type RedteamCase = { command: string; expectedTier: string; note: string };
+type RedteamCase = { command: string; expectedTier: Tier; note: string };
 
 const FIXTURE = join(import.meta.dir, "fixtures", "redteam.jsonl");
 const WORKSPACE = "/ws";
