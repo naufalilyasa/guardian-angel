@@ -210,6 +210,12 @@ describe("REGRESSION: ask triggers must not mask block-tier rm checks", () => {
     const result = verdictOf("sudo rm ./build");
     expect(result.verdict).toBe("ask");
   });
+
+  test("an ask-chained clean rm keeps its trash replacement", () => {
+    const result = verdictOf("sudo rm ./build");
+    expect(result.verdict).toBe("ask");
+    expect(result.replacement).toEqual({ kind: "trash", path: "/ws/build" });
+  });
 });
 
 describe("malformed input", () => {
