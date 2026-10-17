@@ -102,7 +102,7 @@ Catatan: Wave 1, 3 adalah gerbang serial karena tipe/interface harus stabil sebe
 ## Todos
 > Implementation + Test = ONE todo. Never separate.
 <!-- APPEND TASK BATCHES BELOW THIS LINE WITH edit/apply_patch - never rewrite the headers above. -->
-- [ ] 1. Scaffold Bun package, tipe inti, dan path containment
+- [x] 1. Scaffold Bun package, tipe inti, dan path containment
   What to do / Must NOT do: Buat `package.json` (private, `"type":"module"`, `bin: {"ga":"./src/cli/ga.ts"}`, scripts `test`/`typecheck`/`ga`), `tsconfig.json` (strict, `moduleResolution: bundler`, target ES2022), `.gitignore` root (`node_modules/`, `.omo/evidence/`, `.guardian-angel/`), `src/core/types.ts` (`Tier`, `ToolCall`, `Scope`, `PolicyRule`, `PolicyConfig`, `GuardResult`, `GuardDeps`, `ApprovalStore`, `AuditSink`), `src/core/paths.ts` (`resolveLexical(workspace, input)`, `isInsideWorkspace`, `assertInSandbox`). Definisikan bentuk persis: `ToolCall = {toolName:"bash"|"write"|"edit"; input: Record<string, unknown>}`; `GuardResult = {verdict: Tier; reason?: string; replacement?: {kind:"trash"; path: string}}`; `Scope = {workspace: string; sessionId: string; scopePath: string}`; `GuardDeps = {workspace: string; sessionId: string; confirm(title: string, message: string): Promise<boolean>; now(): number; policy: PolicyConfig; approvals: ApprovalStore; audit: AuditSink}`. `src/index.ts` hanya mengekspor tipe + `paths` (T7 menambahkan `classify`/`guard`). Tambahkan devDependencies `@code-yeongyu/senpi@2026.10.16` (types-only; adapter di-load Senpi saat runtime) dan `typebox`; JANGAN menambah dependency runtime. Inisialisasi repo: jalankan `git init` bila `.git` belum ada, buat `.gitignore` root berisi `node_modules/`, `.omo/evidence/`, `.guardian-angel/`, lalu commit awal `chore: initial commit` sebelum commit T1. JANGAN membuat `classify`/`guard` stub yang di-export sebelum implementasi.
   Closes: GAP-1
   Parallelization: Wave 1 | Blocked by: - | Blocks: T2-T12
@@ -112,7 +112,7 @@ Catatan: Wave 1, 3 adalah gerbang serial karena tipe/interface harus stabil sebe
   Commit: Y | `chore(scaffold): bun package, core types, path containment`
   Recommended task executor category: `quick` - scaffold mekanis, satu file tipe + satu util.
 
-- [ ] 2. Classifier bash + file path (allow/ask/block)
+- [x] 2. Classifier bash + file path (allow/ask/block)
   What to do / Must NOT do: Implementasi `src/core/classifier.ts` murni (tanpa fs): normalisasi tool (`bash`, `write`, `edit`; `read`/`grep`/`find`/`ls` → allow), tier default `allow` untuk perintah bash yang tidak cocok aturan apa pun (guard menargetkan kesalahan, bukan permission system). Rules bash: block `rm -rf /`, `rm -rf ~`, `mkfs*`, `dd of=/dev/*`, fork bomb, `curl`/`wget` pipe ke `sh`/`bash`; ask `sudo`, `git push`, `chmod -R` di luar workspace; `rm` bersih (hanya flag `-f`/`-r`/`-rf`/`-fr`, tepat satu operand literal tanpa glob `*?[`, tanpa `$`/backtick/quote-substitusi) di dalam workspace → `replacement:{kind:"trash", path:<absolute>}`; `rm` kompleks (glob, substitusi, pipe, multi-target, `find -delete`) → block dengan alasan dan panduan `ga trash <path>` per target; `rm` target di luar workspace atau workspace root → block (trash hanya mencakup workspace). Rules file path: `write`/`edit` di luar workspace → ask; di dalam → allow. Tokenizer segmen (`|`, `&&`, `||`, `;`, newline) untuk mendeteksi pipe. Kembalikan `Verdict` + `reason` + `replacement?`. JANGAN menyentuh fs, jangan mengeksekusi perintah, jangan import Senpi, jangan menganggap semua perintah tak dikenal sebagai ask.
   Closes: GAP-1, GAP-2
   Parallelization: Wave 2 | Blocked by: T1 | Blocks: T7, T11
@@ -122,7 +122,7 @@ Catatan: Wave 1, 3 adalah gerbang serial karena tipe/interface harus stabil sebe
   Commit: Y | `feat(classifier): bash and file-path tiers`
   Recommended task executor category: `unspecified-high` - aturan multi-kasus dan parsing segmen.
 
-- [ ] 3. Ruleset SQL (SELECT allow, DROP/TRUNCATE block, DELETE/UPDATE ask)
+- [x] 3. Ruleset SQL (SELECT allow, DROP/TRUNCATE block, DELETE/UPDATE ask)
   What to do / Must NOT do: Implementasi `src/core/sql.ts` + integrasi ke classifier: deteksi SQL pada client `mysql`/`mariadb`/`psql`/`sqlite3`/`mongosh`; payload dari `-e`/`--execute` (mysql/mariadb), `-c`/`--command` (psql), positional SQL (sqlite3), `--eval` (mongosh), stdin pipe (`echo "DROP ..." | mysql`), heredoc, dan redirect dari file (`mysql < file.sql`). Pipe/heredoc bisa dibaca dari teks perintah; redirect file TIDAK bisa dibaca classifier murni (tanpa fs) sehingga selalu `ask` dengan reason "SQL dari file tidak dapat diperiksa". `bash -c` adalah shell, bukan payload SQL. SELECT/SHOW/DESCRIBE/EXPLAIN/PRAGMA → allow; DROP/TRUNCATE/ALTER → block; DELETE/UPDATE → ask (termasuk tanpa WHERE, dengan reason khusus); statement SQL lain yang terdeteksi → ask "unclassified SQL"; query tak terparse → ask. JANGAN membuat parser SQL penuh; jangan mengeksekusi query; `-f/--file` dan mysqldump di luar scope POC.
   Closes: GAP-4
   Parallelization: Wave 2 | Blocked by: T1 | Blocks: T7, T11
@@ -132,7 +132,7 @@ Catatan: Wave 1, 3 adalah gerbang serial karena tipe/interface harus stabil sebe
   Commit: Y | `feat(classifier): sql tier rules`
   Recommended task executor category: `unspecified-high` - regex SQL + integrasi parser.
 
-- [ ] 4. Policy loader + config tier (block tidak bisa diturunkan)
+- [x] 4. Policy loader + config tier (block tidak bisa diturunkan)
   What to do / Must NOT do: Implementasi `src/core/policy.ts`: muat project `<workspace>/.guardian-angel/config.json` dan global `$XDG_CONFIG_HOME/guardian-angel/config.json` (fallback `~/.config/guardian-angel/config.json`), validasi schema `{rules:[{match:{tool?,command?,path?},tier,reason?}]}`; precedence builtin < global < project; dalam satu layer last-match-wins; project tidak bisa menurunkan tier `block` bawaan (boleh menaikkan), global boleh menurunkan; layer invalid diabaikan + audit warning, bukan crash. Match memakai wildcard `*` anchored, case-sensitive, bukan regex. JANGAN membaca `process.cwd()` di core; `workspace` selalu parameter.
   Closes: GAP-1, GAP-2
   Parallelization: Wave 2 | Blocked by: T1 | Blocks: T7, T11
@@ -142,7 +142,7 @@ Catatan: Wave 1, 3 adalah gerbang serial karena tipe/interface harus stabil sebe
   Commit: Y | `feat(policy): configurable tiers with protected block`
   Recommended task executor category: `unspecified-low` - satu modul loader + precedence.
 
-- [ ] 5. Store layout, trash, restore, gc, list
+- [x] 5. Store layout, trash, restore, gc, list
   What to do / Must NOT do: Implementasi `src/core/store.ts` (path `.guardian-angel/{trash,approvals.json,audit.jsonl}`, auto-`.gitignore` idempotent: buat `<workspace>/.gitignore` bila belum ada, tambahkan baris `.guardian-angel/` sekali) dan `src/core/trash.ts`: `safeDelete(workspace, path)` → id `<timestamp>-<basename>-<hash8>`, pindahkan ke `trash/<id>/` dengan `meta.json` (`originalPath`, `deletedAt`, `kind`), return id; `restore(workspace, id)` menolak overwrite bila path asli sudah ada (error jelas, tidak menimpa), membuat parent dir, rename balik, hapus entry; `gc(workspace, now)` menghapus entry lebih tua dari 24 jam (`TRASH_TTL_MS` konstan) dan return jumlah; `listTrash(workspace)` urut terbaru. Enforcement: semua path harus di dalam workspace dan bukan workspace root (pakai `paths.ts`); tolak symlink fail-closed; rename EXDEV → error jelas, TANPA copy+delete fallback; JANGAN resolve symlink di v0.0.1.
   Closes: GAP-3
   Parallelization: Wave 2 | Blocked by: T1 | Blocks: T7, T8
@@ -152,7 +152,7 @@ Catatan: Wave 1, 3 adalah gerbang serial karena tipe/interface harus stabil sebe
   Commit: Y | `feat(trash): rename-based delete, restore, gc`
   Recommended task executor category: `deep-low` - containment + rename + restore punya banyak edge case.
 
-- [ ] 6. Approvals per-Scope + audit jsonl
+- [x] 6. Approvals per-Scope + audit jsonl
   What to do / Must NOT do: Implementasi `src/core/approvals.ts`: Scope key = `${workspace}\0${sessionId}\0${scopePath}`; `scopePath` = path target ternormalisasi untuk `write`/`edit`, workspace root untuk `bash`/SQL. `approvals.json` schema `{version:1, entries:{"<key>":{grantedAt,expiresAt,reason?}}}`; TTL 24 jam; `grant`, `check`, `revoke`, `gc`; tulis atomik temp+rename; file korup → anggap kosong + audit warning (re-ask, bukan crash); asumsi single-process tanpa lock lintas proses. `src/core/audit.ts`: `appendAudit(workspace, entry)` menambah satu baris JSON ke `audit.jsonl` (`{ts,sessionId,tool,tier,reason,scopeKey?,command?}`), append-only; redaksi nilai setelah `password=`, `passwd=`, `token=`, `secret=`, `api_key=` dan flag `--password`. JANGAN menyimpan approval global lintas proyek.
   Closes: GAP-1
   Parallelization: Wave 2 | Blocked by: T1 | Blocks: T7
@@ -162,7 +162,7 @@ Catatan: Wave 1, 3 adalah gerbang serial karena tipe/interface harus stabil sebe
   Commit: Y | `feat(approvals): per-scope approvals and audit log`
   Recommended task executor category: `unspecified-low` - dua modul kecil dengan file json.
 
-- [ ] 7. Orchestrator `guard()` dengan fail policy hybrid
+- [x] 7. Orchestrator `guard()` dengan fail policy hybrid
   What to do / Must NOT do: Implementasi `src/core/guard.ts`: `guard(call, deps)` → `GuardResult`, dengan `deps: GuardDeps` persis dari T1. Alur: normalize → policy+classify → `block` (audit) → `ask` (hitung scopeKey; `approvals.check` true → allow; false → `deps.confirm(title, message)`; grant + audit; ditolak → block + audit) → `allow` (tanpa audit) / `replacement` (audit `rewrite`). Fail policy: exception classifier → bila command cocok pola destruktif known (`rm -rf /`, `rm -rf ~`, `mkfs`, `DROP`, `TRUNCATE`, `curl|sh`) → block + audit; selain itu allow + audit `classifier_error`. JANGAN menaruh logika ask/audit di adapter; jangan memanggil fs langsung dari guard selain lewat store/audit.
   Closes: GAP-1, GAP-2, GAP-4
   Parallelization: Wave 3 | Blocked by: T2-T6 | Blocks: T8, T9, T11
@@ -172,7 +172,7 @@ Catatan: Wave 1, 3 adalah gerbang serial karena tipe/interface harus stabil sebe
   Commit: Y | `feat(core): guard orchestrator with hybrid fail policy`
   Recommended task executor category: `deep-high` - menyatukan 5 modul dengan kontrak keputusan yang tidak boleh salah.
 
-- [ ] 8. CLI `ga` (restore, list, gc, status)
+- [x] 8. CLI `ga` (restore, list, gc, status)
   What to do / Must NOT do: Implementasi `src/cli/ga.ts` (shebang `#!/usr/bin/env bun`) + `package.json` `bin: {"ga":"./src/cli/ga.ts"}`, script `"ga": "bun run src/cli/ga.ts"`: `ga trash <path>`, `ga restore --last`, `ga restore <id>`, `ga list`, `ga gc`, `ga status`. Resolusi workspace: flag `--workspace <path>` > env `GA_WORKSPACE` > `process.cwd()` (hanya CLI yang boleh memakai cwd). `ga trash` mencetak id; `ga status` mencetak workspace, jumlah trash, jumlah approval, path audit, TTL. Output manusiawi; exit 0 sukses, 1 user error. JANGAN menambah subcommand di luar daftar; jangan menaruh logika keputusan di CLI.
   Closes: GAP-3
   Parallelization: Wave 4 | Blocked by: T5, T6 | Blocks: T12
@@ -182,7 +182,7 @@ Catatan: Wave 1, 3 adalah gerbang serial karena tipe/interface harus stabil sebe
   Commit: Y | `feat(cli): ga restore/list/gc/status`
   Recommended task executor category: `quick` - CLI tipis di atas core yang sudah ada.
 
-- [ ] 9. Adapter Senpi `pi.on("tool_call")`
+- [x] 9. Adapter Senpi `pi.on("tool_call")`
   What to do / Must NOT do: Implementasi `src/adapters/senpi.ts` default export `(pi: ExtensionAPI) => { pi.on("tool_call", handler) }`; import `type { ExtensionAPI, ToolCallEvent, ToolCallEventResult }` dari `@code-yeongyu/senpi` (devDependency, erased at runtime). Handler: `sessionId = ctx.sessionManager.getSessionId()`, `workspace = ctx.cwd`; normalisasi `{toolName,input}` → `guard(call, deps)`; `block` → `{block:true, reason}`; `ask` → port confirm `(title,message) => ctx.ui.confirm(title,message)` (jika `!ctx.hasUI` → block fail-closed); `replacement` → render `bun run <pkgRoot>/src/cli/ga.ts trash <shell-quoted path>` dan mutasi `event.input.command` in-place; `pkgRoot = path.resolve(import.meta.dir, "../..")`. JANGAN mengimpor core ke harness; jangan melakukan I/O sendiri di luar port; jangan mengubah input non-bash.
   Closes: GAP-2, GAP-3
   Parallelization: Wave 4 | Blocked by: T7 | Blocks: T12
@@ -192,7 +192,7 @@ Catatan: Wave 1, 3 adalah gerbang serial karena tipe/interface harus stabil sebe
   Commit: Y | `feat(adapter): senpi tool_call guard`
   Recommended task executor category: `unspecified-high` - adapter + pemetaan UI/rewrite.
 
-- [ ] 10. VM test harness, sandbox assertions, canary, read-only proof
+- [x] 10. VM test harness, sandbox assertions, canary, read-only proof
   What to do / Must NOT do: Lengkapi `scripts/test-in-vm.sh` + `test/helpers/sandbox.ts` (`makeSandbox`, `assertInSandbox`, `makeCanary`). Script: copy repo ke `/tmp/ga`, `bun install`, `bunx tsc --noEmit`, cek mount read-only (`if touch /mnt/guardian-angel/.ga-write-probe 2>/dev/null; then echo "mount is writable"; exit 1; else echo "read-only mount: OK"; fi`), buat canary `/tmp/ga-canary`, jalankan `bun test`, verifikasi canary, cetak `canary: intact`. JANGAN menjalankan test di host (kecuali smoke adapter T9 di `mkdtemp`).
   Closes: GAP-5
   Parallelization: Wave 4 | Blocked by: T1 | Blocks: T11, T12
@@ -202,7 +202,7 @@ Catatan: Wave 1, 3 adalah gerbang serial karena tipe/interface harus stabil sebe
   Commit: Y | `test(vm): sandbox harness and read-only proof`
   Recommended task executor category: `unspecified-low` - shell + helper test.
 
-- [ ] 11. Redteam corpus awal
+- [x] 11. Redteam corpus awal
   What to do / Must NOT do: Buat `test/redteam.test.ts` + `test/fixtures/redteam.jsonl`: minimal 30 kasus (ANSI-C quoting, `$()`, pipe, eval, sudo, `find -delete`, base64, SQL via pipe, path traversal). Setiap kasus punya `command`, `expectedTier`, `note` (bila bypass disadari). JANGAN mengeksekusi perintah; hanya assert Verdict.
   Closes: GAP-2, GAP-4
   Parallelization: Wave 5 | Blocked by: T2-T10 | Blocks: T12
@@ -212,7 +212,7 @@ Catatan: Wave 1, 3 adalah gerbang serial karena tipe/interface harus stabil sebe
   Commit: Y | `test(redteam): initial bypass corpus`
   Recommended task executor category: `unspecified-high` - menyusun corpus dan ekspektasi.
 
-- [ ] 12. Docs, versi 0.0.1, dan verifikasi akhir
+- [x] 12. Docs, versi 0.0.1, dan verifikasi akhir
   What to do / Must NOT do: Update `README.md` (cara pakai `ga trash/restore/list/gc/status`, load adapter, default tier allow, perilaku SQL, retensi 24 jam, config global, smoke host `mkdtemp`), `package.json` version `0.0.1`, `docs/plan.md` status POC, dan `.omo/evidence/` ringkasan. JANGAN mengklaim fitur di luar POC (MCP/OpenCode/LLM advisor, `-f` SQL, copy+delete EXDEV).
   Closes: GAP-1, GAP-5
   Parallelization: Wave 6 | Blocked by: T8-T11 | Blocks: -
@@ -226,7 +226,7 @@ Catatan: Wave 1, 3 adalah gerbang serial karena tipe/interface harus stabil sebe
 > Runs in parallel after ALL todos. ALL must APPROVE. Surface results and wait for the user's explicit okay before declaring complete.
 - [ ] F1. Plan compliance audit - verifikasi setiap todo `- [ ] N.` dieksekusi, tidak ada scope creep (tidak ada MCP/OpenCode/LLM advisor), dan semua file yang diklaim ada benar-benar ada. Evidence `.omo/evidence/f1-guardian-angel-poc-v0-0-1.md`
 - [ ] F2. Code quality review - `bunx tsc --noEmit` strict, tidak ada `any` tanpa alasan, core tidak mengimpor harness (grep `@code-yeongyu/senpi` hanya di `src/adapters/`), tidak ada `process.cwd()` di core. Evidence `.omo/evidence/f2-guardian-angel-poc-v0-0-1.md`
-- [ ] F3. Real manual QA - di VM: `scripts/test-in-vm.sh` hijau; `touch /mnt/guardian-angel/.ga-write-probe` gagal; `ga list`/`restore --last` bekerja pada file dummy; canary utuh. Evidence `.omo/evidence/f3-guardian-angel-poc-v0-0-1.md`
+- [x] F3. Real manual QA - di VM: `scripts/test-in-vm.sh` hijau; `touch /mnt/guardian-angel/.ga-write-probe` gagal; `ga list`/`restore --last` bekerja pada file dummy; canary utuh. Evidence `.omo/evidence/f3-guardian-angel-poc-v0-0-1.md`
 - [ ] F4. Ideal-state fidelity - cek 1:1 setiap IS-1..IS-6 terhadap perilaku nyata di VM; setiap kekurangan menjadi todo baru `- [ ] N.`, bukan catatan. Evidence `.omo/evidence/f4-guardian-angel-poc-v0-0-1.md`
 
 ## Commit strategy

@@ -1,0 +1,61 @@
+{
+  "schema_version": 2,
+  "active_work_id": "guardian-angel-poc-v0-0-1",
+  "works": {
+    "guardian-angel-poc-v0-0-1": {
+      "work_id": "guardian-angel-poc-v0-0-1",
+      "active_plan": ".omo/plans/guardian-angel-poc-v0-0-1.md",
+      "plan_name": "guardian-angel-poc-v0-0-1",
+      "session_ids": [
+        "senpi:01a14977-34f5-7ff7-a43b-1e3f911afe19"
+      ],
+      "status": "active",
+      "worktree_path": null,
+      "delivery_mode": "direct",
+      "phases": [
+        {
+          "wave": 1,
+          "worktree": "/Users/ctp-itdev2/Documents/my-project/guardian-angel-wt/guardian-angel-poc-v0-0-1-wave-1",
+          "branch": "wave-1",
+          "status": "pending"
+        },
+        {
+          "wave": 2,
+          "worktree": "/Users/ctp-itdev2/Documents/my-project/guardian-angel-wt/guardian-angel-poc-v0-0-1-wave-2",
+          "branch": "wave-2",
+          "status": "pending"
+        },
+        {
+          "wave": 3,
+          "worktree": "/Users/ctp-itdev2/Documents/my-project/guardian-angel-wt/guardian-angel-poc-v0-0-1-wave-3",
+          "branch": "wave-3",
+          "status": "pending"
+        },
+        {
+          "wave": 4,
+          "worktree": "/Users/ctp-itdev2/Documents/my-project/guardian-angel-wt/guardian-angel-poc-v0-0-1-wave-4",
+          "branch": "wave-4",
+          "status": "pending"
+        },
+        {
+          "wave": 5,
+          "worktree": "/Users/ctp-itdev2/Documents/my-project/guardian-angel-wt/guardian-angel-poc-v0-0-1-wave-5",
+          "branch": "wave-5",
+          "status": "pending"
+        },
+        {
+          "wave": 6,
+          "worktree": "/Users/ctp-itdev2/Documents/my-project/guardian-angel-wt/guardian-angel-poc-v0-0-1-wave-6",
+          "branch": "wave-6",
+          "status": "pending"
+        },
+        {
+          "wave": 7,
+          "worktree": "/Users/ctp-itdev2/Documents/my-project/guardian-angel-wt/guardian-angel-poc-v0-0-1-wave-7",
+          "branch": "wave-7",
+          "status": "pending"
+        }
+      ]
+    }
+  }
+}
