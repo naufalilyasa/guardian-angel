@@ -247,7 +247,12 @@ export function classify(input: ClassifierInput): GuardResult {
 
   for (const { re, reason } of ASK_PATTERNS) {
     if (re.test(command)) {
-      return rmResult ? stricter(rmResult, { verdict: "ask", reason }) : { verdict: "ask", reason };
+      if (!rmResult) return { verdict: "ask", reason };
+      const merged = stricter(rmResult, { verdict: "ask", reason });
+      if (merged.verdict === "ask" && rmResult.replacement) {
+        return { ...merged, replacement: rmResult.replacement };
+      }
+      return merged;
     }
   }
 

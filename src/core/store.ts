@@ -38,11 +38,3 @@ export function ensureStore(workspace: string): void {
     appendFileSync(gitignorePath, `${prefix}${IGNORE_LINE}\n`, "utf8");
   }
 }
-
-export function writeJsonAtomic(path: string, data: unknown): void {
-  const tmp = `${path}.tmp`;
-  mkdirSync(join(path, ".."), { recursive: true });
-  writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
-  const { renameSync } = require("node:fs") as typeof import("node:fs");
-  renameSync(tmp, path);
-}

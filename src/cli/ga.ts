@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import { existsSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { gc, listTrash, restore, safeDelete, TRASH_TTL_MS } from "../core/trash.ts";
-import { approvalsFile, auditFile, ensureStore, storeDir, trashDir } from "../core/store.ts";
+import { auditFile, ensureStore } from "../core/store.ts";
 import { createApprovalStore } from "../core/approvals.ts";
 
 const USAGE = `guardian-angel CLI

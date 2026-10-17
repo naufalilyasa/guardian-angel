@@ -10,10 +10,6 @@ const DESTRUCTIVE_FALLBACK =
 
 const SEVERITY: Record<Tier, number> = { allow: 0, ask: 1, block: 2 };
 
-function worst(a: Tier, b: Tier): Tier {
-  return SEVERITY[a] >= SEVERITY[b] ? a : b;
-}
-
 function scopeFor(call: ToolCall, deps: GuardDeps): Scope {
   const rawPath = call.input.path;
   const scopePath =

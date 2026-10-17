@@ -254,6 +254,15 @@ describe("policy integration", () => {
     expect(result.replacement).toEqual({ kind: "trash", path: join(workspace, "build") });
   });
 
+  test("REGRESSION: an ask-chained sudo rm keeps the trash replacement after approval", async () => {
+    const { deps, workspace } = harness({ approve: true });
+
+    const result = await guard(bash("sudo rm ./build"), deps);
+
+    expect(result.verdict).toBe("allow");
+    expect(result.replacement).toEqual({ kind: "trash", path: join(workspace, "build") });
+  });
+
   test("REGRESSION: an already-approved scope keeps the trash replacement", async () => {
     const { deps, workspace } = harness({ approve: true });
     deps.policy = {
