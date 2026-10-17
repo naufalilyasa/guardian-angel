@@ -9,7 +9,7 @@
       "session_ids": [
         "senpi:01a14977-34f5-7ff7-a43b-1e3f911afe19"
       ],
-      "status": "active",
+      "status": "completed",
       "worktree_path": null,
       "delivery_mode": "direct",
       "phases": [
@@ -55,7 +55,32 @@
           "branch": "wave-7",
           "status": "pending"
         }
-      ]
+      ],
+      "completed_at": "2026-10-17T13:48:55.623Z",
+      "plan_checkboxes": "16/16",
+      "commits": [
+        "1a7b0c4",
+        "27313ca",
+        "58d77f7",
+        "2fd4a17",
+        "97cc971",
+        "0669723",
+        "5f4d290",
+        "e374cfd",
+        "215859a",
+        "71b1814"
+      ],
+      "final_verdicts": {
+        "F1": "APPROVE 10/10",
+        "F2": "APPROVE",
+        "F3": "APPROVE",
+        "F4": "APPROVE 6/6 IS rows"
+      },
+      "verification": {
+        "typecheck": "exit 0",
+        "tests": "254 pass, 0 fail",
+        "vm": "read-only mount OK, canary intact"
+      }
     }
   }
 }
