@@ -1,180 +1,206 @@
-# guardian-angel — guard + undo untuk Senpi/OMO Native
+# Guardian Angel — Guard Deterministik & Undo Berbasis Trash untuk Coding Agent
 
-Guard deterministik sebelum tool call dieksekusi, dengan **undo berbasis trash** sebagai jaring pengaman utama. Fase 1 menargetkan Senpi/OMO Native.
+Guardian Angel adalah sistem pengawas (guard) deterministik sebelum tool call dieksekusi oleh coding agent, dilengkapi **mekanisme undo berbasis trash** sebagai jaring pengaman utama. 
 
-**Bukan sandbox, bukan security boundary.** Menargetkan kesalahan agent + prompt injection oportunistik. Saat classifier error: pola destruktif fail-closed, sisanya fail-open + log.
+Mendukung **OpenCode 1.19.3** dan **Senpi / OMO Native**.
 
-**Status: POC v0.0.1** — core, adapter Senpi, CLI, dan test suite sudah berjalan. Lihat "Batas POC" di bawah untuk yang belum ada.
+> **Bukan sandbox OS, bukan security boundary.** Dirancang untuk mencegah kesalahan fatal agen (prompt injection oportunistik, halusinasi refactoring, penghapusan data, dan overwrite). Keputusan bersifat fail-closed untuk pola destruktif dan dilengkapi audit log terstruktur.
 
-## Posisi
+---
 
-Guard bawaan Senpi (permission system) adalah confirmation policy per-call tanpa undo. `cc-safety-net` punya adapter pi yang block-only: tanpa undo, tanpa tier ask native, tanpa cakupan SQL.
+## Fitur Utama
 
-guardian-angel mengisi ruang yang kosong:
+- 🔄 **Undo & Restorasi Byte-Identik**: Perintah `rm` target tunggal di-rewrite secara otomatis menjadi `ga trash <path>` (O(1) rename tanpa duplikasi data). Dapat dipulihkan sewaktu-waktu dengan `ga restore --last` (terverifikasi integritas hash SHA-256).
+- 🗄️ **Cakupan SQL Deterministik**: Menahan perintah SQL destruktif (`DROP`, `TRUNCATE`, `ALTER`) baik via CLI client (`psql`, `mysql`, `sqlite3`), flag multipayload (`-c`, `-e`), input redirection, maupun heredoc.
+- 🛡️ **Pencegahan Overwrite Berkas Eksisting**: Mendeteksi penimpaan file yang sudah ada di disk melalui redirection (`>`, `>>`, `>|`, `2>`), `cat /dev/null >`, `tee`, `cp`, `mv`, `install`, `sed -i`, `truncate`, dan `dd of=`.
+- 🔒 **Proteksi Imutabilitas Store**: Direktori internal `.guardian-angel/` (audit, approvals, trash) dan repositori `.git/` kebal terhadap manipulasi, penulisan, penghapusan, atau penimpaan langsung maupun lewat symlink dan compound `cd`.
+- ⏱️ **Persetujuan Granular 24 Jam**: Approval di-scope ketat per `workspace \0 session \0 path \0 ruleId`. Menyetujui `git push` tidak akan pernah membuka izin untuk `sudo`, `chmod -R`, atau `docker prune`.
+- 🕵️ **Redaksi Rahasia Otomatis**: Audit log (`audit.jsonl`) secara otomatis menyamarkan token sensitif (Bearer, API keys, password database `-p`, kredensial URL, dan secret keys).
+- 🧩 **Anti-Evasion Parser**: Menangani wrapper shell bertingkat (`bash -c`, `eval`, `$(...)`, `<(...)`, `>(...)`, backticks, subshell majemuk), launcher flags (`env`, `nice`, `timeout`), bare shell variable indirection (`$CMD`, `${CMD}`), quote-splitting (`r'm'`, `d'd'`), serta compound directory traversal (`cd`, `pushd`).
 
-- **Undo/trash** untuk aksi destruktif
-- **Cakupan SQL** (SELECT allow, DROP/TRUNCATE/ALTER block, DELETE/UPDATE ask)
-- **Approval per-Scope** (path + sesi), bukan per-call
+---
 
 ## Arsitektur
 
 ```
-Agent tool call (Senpi)
-      │
-      ▼
-┌──────────────────┐
-│ src/adapters/    │  pi.on("tool_call") — choke point tunggal (pre-execution)
-│ senpi.ts         │  block keras · ask via ctx.ui.confirm · rewrite hybrid rm
-└────────┬─────────┘
-         ▼
-┌──────────────────┐
-│ src/core/        │  DETERMINISTIK (pure code, tanpa LLM di jalur keputusan)
-│ classifier.ts    │  → allow | ask (per Scope) | block (hard)
-│ sql.ts           │  ruleset SQL per-client
-│ policy.ts        │  config tier + builtin block yang tidak bisa diturunkan
-│ trash.ts         │  undo via trash (rename O(1), satu volume workspace)
-│ approvals.ts     │  approval per-proyek + TTL 24 jam
-│ audit.ts         │  audit.jsonl + redaksi secret
-│ guard.ts         │  orkestrator: policy → classify → ask/block/rewrite → audit
-└──────────────────┘
+           [ Coding Agent (OpenCode / Senpi) ]
+                          │
+                          ▼ (tool call: bash, write, edit, patch)
+        ┌───────────────────────────────────┐
+        │       Adapter Interception        │
+        │  • OpenCode: tool.execute.before  │
+        │  • Senpi:    pi.on("tool_call")   │
+        └─────────────────┬─────────────────┘
+                          │
+                          ▼
+        ┌───────────────────────────────────┐
+        │        src/core/ (Pure ESM)       │
+        │  • classifier.ts (Regex & Parser) │ ──► allow | ask | block
+        │  • sql.ts        (SQL Statements) │ ──► rewrite:rm-trash
+        │  • paths.ts      (Physical/Symlnk)│
+        │  • protected.ts  (Store Defense)  │
+        │  • policy.ts     (Layered Rules)  │
+        └─────────┬─────────────────────────┘
+                  │
+        ┌─────────┴─────────────────────────┐
+        ▼                                   ▼
+ [ Ask: IPC / UI Dialog ]         [ Rewrite / Block / Allow ]
+  • OpenCode: ui.DialogConfirm     • ga trash (Undoable)
+  • Senpi:    ctx.ui.confirm       • Throw error (Blocked)
+  • 24h Approval Memory            • Audit log (audit.jsonl)
 ```
 
-Aturan emas: **core tidak pernah import code harness**.
+> **Aturan Emas**: Modul `src/core/` adalah modul murni (pure deterministic) tanpa dependensi runtime harness.
 
-## Tier
+---
 
-| Tier   | Contoh | Perilaku |
-|--------|--------|----------|
-| allow  | `ls`, `cat`, `git status`, tulis di workspace, perintah tak dikenal | langsung jalan |
-| ask    | `DELETE`/`UPDATE` SQL, tulis di luar workspace, `git push`, `sudo` | approval per Scope, sekali saja |
-| block  | `rm -rf /`, `mkfs`, `curl \| bash`, `DROP`/`TRUNCATE`/`ALTER`, tulis ke `.guardian-angel/**` atau `.git/**` | ditolak, tidak bisa override |
+## Klasifikasi Tier
 
-Default untuk perintah bash yang tidak cocok aturan apa pun adalah **allow** — guard ini menargetkan kesalahan, bukan menggantikan permission system.
+| Tier | Contoh Perintah | Perilaku Guard |
+|------|-----------------|----------------|
+| **allow** | `ls`, `git status`, kompilasi build, baca berkas, penulisan berkas baru | Langsung dieksekusi |
+| **ask** | Menimpa file eksisting (`>`), `git push`, `sudo`, `DELETE`/`UPDATE` SQL, tulis keluar workspace | Menampilkan dialog konfirmasi interaktif; diingat 24 jam per-rule |
+| **block** | `rm -rf /`, `rm -rf ~`, `mkfs`, `curl \| bash`, `DROP`/`TRUNCATE` SQL, manipulasi `.guardian-angel/**` atau `.git/**` | Ditolak seketika, fail-closed, tidak dapat di-override oleh project |
 
-**Scope approval** = `workspace \0 session \0 path \0 rule`. Satu approval hanya berlaku untuk rule yang menghasilkannya: menyetujui `git push` tidak ikut menyetujui `sudo`, `chmod -R`, atau `docker prune`. Sebelumnya scope hanya `workspace \0 session \0 path`, sehingga satu approval membuka semua perintah `ask`.
+---
 
-**Store tidak bisa diubah agen.** `.guardian-angel/` (audit, approvals, trash) dan `.git/` ditolak untuk `write`, `edit`, redirection (`>`/`>>`), verb penulis (`tee`, `cp`, `mv`, `truncate`, `ln`, `sed -i`, …), `rm`, dan `ga trash`. Membaca store tetap `allow`.
+## Integrasi OpenCode (v1.19.3)
 
-**Residual:** lapisan ini adalah pertahanan berlapis, bukan isolasi. Bila agen mengeksekusi interpreter yang belum tertangkap classifier (`python3 -c`, base64 — lihat `KNOWN BYPASS` di corpus redteam) ia masih bisa menulis `approvals.json` secara langsung. Karena secret apa pun yang bisa dibaca agen juga bisa dipalsukan, penulisan store yang sebenarnya harus dicegah di level OS (user terpisah, mount read-only, atau sandbox), bukan di dalam proses yang sama.
+Guardian Angel menyediakan integrasi modular untuk OpenCode:
 
-**Wrapper di-unwrap.** `bash -c "…"`, `sh -c`, `zsh -c`, `eval "…"`, `$(…)` dan backtick ditembus sampai 5 level, lalu isinya diklasifikasi ulang. Launcher (`nice`, `timeout`, `nohup`, `env`, `command`, …) transparan terhadap aturan `rm`. `xargs rm` dan `find -exec rm` selalu `block` karena daftar targetnya tidak dapat diperiksa.
+1. **Server Plugin** (`src/adapters/opencode/server.ts`):
+   - Mencegat eksekusi melalui hook `tool.execute.before`.
+   - Memetakan tool OpenCode (`bash`, `write`, `edit`, `patch`).
+   - Mengalihkan perintah `rm` menjadi perintah `ga trash`.
+   - Mengirim permintaan konfirmasi `ask` ke TUI bridge atau fail-closed di mode headless.
+   - Dilengkapi cache penolakan 30 detik untuk mencegah popup berulang saat agen me-retry perintah.
 
-## Undo (hybrid)
+2. **TUI Plugin** (`src/adapters/opencode/tui.ts`):
+   - Menampilkan modal native `ui.DialogConfirm` di antarmuka TUI OpenCode.
+   - Mengirim sinyal heartbeat aktif setiap 2 detik.
 
-- `rm` target tunggal yang terparse bersih **dan merupakan seluruh command** → di-rewrite menjadi `ga trash <path>` (O(1), tanpa copy data).
-- `rm` yang dirangkai (`rm x && npm test`, `cd sub && rm x`, pipe, redirection) → block. Rewrite hanya mengganti string command, jadi merangkai akan menghilangkan perintah lain atau me-resolve path relatif ke direktori yang salah.
-- `rm` kompleks (glob, substitusi, multi-target) → block + panduan `ga trash <path>` per target.
-- `restore()` mengembalikan; `gc()` menghapus item lebih tua dari 24 jam.
+3. **File-IPC Bridge** (`src/adapters/opencode/ipc.ts`):
+   - Komunikasi antar-proses aman di `/tmp/guardian-angel-ipc-<user>` (mode `0o700`).
+   - Dilengkapi cryptographic nonce acak dan izin berkas ketat (`0o600`).
 
-## CLI `ga`
+### Pemasangan di OpenCode
 
-```bash
-bun run ga trash <path>     # pindahkan ke trash, cetak id
-bun run ga restore --last   # pulihkan item terbaru
-bun run ga restore <id>     # pulihkan item tertentu
-bun run ga list             # isi trash
-bun run ga gc               # hapus item > 24 jam
-bun run ga status           # ringkasan store
+Tambahkan plugin server di project `.opencode/plugin/guardian.js` atau `opencode.json`:
+```js
+import { GuardianAngelServer } from "guardian-angel-poc/opencode-server";
+export default GuardianAngelServer;
+export { GuardianAngelServer };
 ```
 
-Workspace resolution: `--workspace <path>` > `$GA_WORKSPACE` > `cwd`.
-
-## Store
-
-```
-<workspace>/.guardian-angel/
-  trash/<id>/          payload + meta.json (rename, satu volume)
-  approvals.json       approval per-proyek (TTL 24 jam)
-  audit.jsonl          setiap keputusan block/ask/rewrite
-```
-
-Direktori ini di-.gitignore otomatis.
-
-## Memasang adapter di Senpi
-
-```bash
-# dev / coba cepat
-senpi -e ./src/adapters/senpi.ts
-
-# pemakaian harian: salin atau symlink ke direktori auto-discovery
-~/.senpi/agent/extensions/
-```
-
-Adapter memetakan:
-
-- `block` → `{ block: true, reason }`
-- `ask` → `ctx.ui.confirm`; tanpa UI (`hasUI=false`) → block (fail-closed)
-- `replacement` → `event.input.command` dimutasi menjadi `bun run <pkg>/src/cli/ga.ts trash <path>`
-
-## Config tier
-
-`.guardian-angel/config.json`:
-
+Daftarkan TUI plugin di `tui.json`:
 ```json
 {
-  "rules": [
-    { "match": { "tool": "bash", "command": "git push*" }, "tier": "ask", "reason": "remote write" }
+  "plugin": [
+    "guardian-angel-poc/opencode-tui"
   ]
 }
 ```
 
-- Precedence: builtin < global (`$XDG_CONFIG_HOME/guardian-angel/config.json`) < project.
-- Dalam satu layer, **last match wins**; pola `*` di-anchor.
-- **Project tidak bisa menurunkan `block` bawaan** — hanya config global user yang boleh.
-- Config invalid diabaikan + warning, tidak membuat guard crash.
+---
 
-## Test: di VM terpisah, bukan di laptop
+## Integrasi Senpi / OMO Native
 
+Daftarkan adapter di ekstensi Senpi:
 ```bash
-scripts/test-in-vm.sh
+# Menjalankan langsung dengan Senpi
+senpi -e ./src/adapters/senpi.ts
+
+# Atau letakkan di direktori auto-discovery
+~/.senpi/agent/extensions/
 ```
 
-Script ini:
+Adapter memetakan:
+- `block` → `{ block: true, reason }`
+- `ask` → `ctx.ui.confirm` (fail-closed jika `hasUI === false`)
+- `rewrite` → mutasi `event.input.command` in-place ke `bun run <pkg>/src/cli/ga.ts trash <path>`.
 
-1. memastikan VM Lima hidup,
-2. memverifikasi mount repo **read-only** (`touch` harus gagal),
-3. menyalin repo ke `/tmp/ga` di dalam VM,
-4. menjalankan `tsc --noEmit` dan `bun test`,
-5. memverifikasi canary `/tmp/ga-canary` tidak tersentuh.
+---
 
-macOS tidak pernah menjalankan test destruktif. Satu-satunya eksekusi di host adalah smoke adapter non-destruktif (`rm ./dummy.txt` di `mkdtemp`).
+## CLI `ga` (Trash & Undo Management)
 
-## Batas POC (jujur)
+Guardian Angel menyediakan antarmuka CLI mandiri:
 
-- Bukan parser shell POSIX penuh. Masih `KNOWN BYPASS` (tercatat di `test/fixtures/redteam.jsonl`): ANSI-C quoting, base64 yang di-decode lalu di-pipe, interpreter payload (`python3 -c`), dan `ssh`. `bash -c`, `eval`, `$(…)`, `<(...)`, `>(...)`, `xargs`, `find -exec`, path absolut (`/bin/rm`), subshell `(...)`, env-assignment prefixes, bare `&` chaining, quote-split command words (`r'm'`, `d'd'`), pelacakan compound `cd`, ekspansi tilde (`~`), dan eksekusi command via variabel (`$CMD`, `${CMD}`) sudah ditangani.
-- `write`/`edit` memakai resolusi fisik: symlink di komponen path yang sudah ada diikuti, dan target yang keluar workspace menjadi `ask` (bukan `allow`). `rm`/`ga trash` menolak symlink secara fail-closed. Symlink tetap bukan sandbox.
-- Deteksi SQL berbasis pola; **semua** payload (`-e`/`-c`/`--execute`, berulang) diklasifikasi dan diambil yang terberat, tapi `-f/--file` dan redirect file selalu `ask` karena classifier murni tidak membaca file. Bukan pengganti DB guard.
-- Trash harus satu volume dengan workspace (EXDEV → error jelas, tanpa fallback copy+delete).
-- MCP interception, adapter Codex/Claude, LLM advisor, CoW snapshot, dan Windows belum ada.
-- Asumsi single-process: `approvals.json` tidak memakai lock lintas proses.
+```bash
+bun run ga trash <path>     # Memindahkan file/folder ke trash dan mencetak ID
+bun run ga restore --last   # Memulihkan item terbaru yang dihapus
+bun run ga restore <id>     # Memulihkan item spesifik berdasarkan ID
+bun run ga list             # Menampilkan daftar berkas di dalam trash
+bun run ga gc               # Membersihkan item yang lebih tua dari 24 jam
+bun run ga status           # Menampilkan ringkasan audit log dan isi store
+```
 
-## Adapter OpenCode v1
+---
 
-Guardian Angel menyediakan integrasi untuk **OpenCode 1.19.3**:
+## Struktur Direktori Store
 
-- **Server Plugin** (`src/adapters/opencode/server.ts`): Memakai hook `tool.execute.before` untuk menghentikan perintah destruktif sebelum dieksekusi, merestrukturisasi perintah `rm` menjadi `ga trash`, serta meneruskan perintah `ask` ke TUI bridge.
-- **TUI Plugin** (`src/adapters/opencode/tui.ts`): Menampilkan dialog konfirmasi native `ui.DialogConfirm` di antarmuka TUI OpenCode dan mencatat persetujuan 24 jam per-rule.
-- **File-IPC Bridge** (`src/adapters/opencode/ipc.ts`): Pertukaran request/response antar-proses dengan timeout fail-closed dan heartbeat deteksi status TUI.
-- **Verifikasi Smoke Test**:
-  - `bun test test/smoke-20-cases.test.ts` — 20 kasus destruktif (quoted path `rm`, overwrite `>`, SQL DROP, wrappers, chained, path tampering).
-  - `bun run test:smoke` (`scripts/test-opencode-smoke.ts`) — Uji end-to-end langsung dengan CLI OpenCode dan agen aktif di sandbox disposable dengan verifikasi integritas canary.
+Setiap workspace yang dilindungi memiliki direktori lokal:
 
-### Pemasangan di OpenCode
+```
+<workspace>/.guardian-angel/
+├── trash/
+│   └── <id>/
+│       ├── payload          # Berkas/direktori asli yang dipindahkan
+│       └── meta.json        # Path asal, timestamp penghapusan, SHA-256
+├── approvals.json           # Cache persetujuan user per-rule (TTL 24 jam)
+├── audit.jsonl              # Catatan lengkap setiap keputusan (block/ask/rewrite)
+└── config.json              # Konfigurasi custom policy per-proyek (opsional)
+```
+*(Direktori ini otomatis ditambahkan ke `.gitignore`)*
 
-1. **Server Plugin**: Daftarkan di `.opencode/plugin/guardian.js` atau `opencode.json`:
-   ```js
-   import { GuardianAngelServer } from "guardian-angel-poc/opencode-server";
-   export default GuardianAngelServer;
-   ```
-2. **TUI Plugin**: Daftarkan di `tui.json`:
-   ```json
-   {
-     "plugin": ["guardian-angel-poc/opencode-tui"]
-   }
-   ```
+---
 
-## Peta jalan
+## Pengujian & Verifikasi
 
-1. ✅ Core (classifier + SQL + policy + trash + approvals + audit + guard) + adapter Senpi + CLI + redteam corpus
-2. ✅ Adapter OpenCode v1 (Server Plugin + TUI Plugin DialogConfirm + File-IPC Bridge + 20-case smoke test)
-3. Adapter harness lain (Codex, Claude Code)
+### 1. Unit & Integration Test Suite
+```bash
+bun test
+```
+*437 test passing / 0 fail / 967 expect calls / 15 test files.*
+
+### 2. Destructive 20-Case Smoke Suite
+Menguji 20 skenario destruktif nyata (quoted path `rm`, overwrite `>`, SQL multi-payload DROP, wrappers, path traversal, git clean):
+```bash
+bun test test/smoke-20-cases.test.ts
+```
+
+### 3. Live Smoke Test OpenCode
+Menjalankan agen OpenCode nyata di dalam disposable sandbox dengan canary file:
+```bash
+bun run test:smoke
+# atau
+bun run scripts/test-opencode-smoke.ts
+```
+
+### 4. Live Redteam & Comprehensive Pentest
+Menjalankan adversarial probe otomatis terhadap LLM (misal `deepseek-v4.1-flash`) untuk mendeteksi potensi bypass:
+```bash
+bun run scripts/run-redteam-live.ts
+bun run scripts/run-comprehensive-pentest.ts
+```
+
+### 5. Isolasi VM Linux (Lima)
+Verifikasi lingkungan ext4 mount read-only terisolasi:
+```bash
+./scripts/test-in-vm.sh
+```
+
+---
+
+## Batasan POC (Known Residuals)
+
+Sesuai prinsip transparansi keamanan, batas kemampuan guard didokumentasikan secara terbuka di `test/fixtures/redteam.jsonl`:
+- **Bukan Sandbox OS**: Eksekusi runtime interpreter tingkat tinggi (`python3 -c "import os; os.remove(...)"`, `node -e "..."`) mengeksekusi payload di level runtime interpreter dan memerlukan isolasi container/OS user terpisah.
+- **Base64 Pipe ke Shell**: Perintah seperti `echo <base64> | base64 -d | sh` mengevaluasi string di runtime shell.
+- **SSH Remoting**: Perintah yang dieksekusi di remote host lewat `ssh user@host "rm -rf /"` berada di luar jangkauan hook lokal.
+- **Volume Tunggal Trash**: Mekanisme `ga trash` menggunakan `fs.renameSync` atomic O(1); jika target berada di filesystem/mount device berbeda (`EXDEV`), operasi ditolak secara fail-closed tanpa fallback copy+delete.
+
+---
+
+## Lisensi
+
+MIT
