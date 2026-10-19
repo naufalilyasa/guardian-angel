@@ -1,32 +1,40 @@
-import type { GuardResult, PolicyConfig, ToolCall } from "./types.ts";
-import { isInsideWorkspace, resolveLexical } from "./paths.ts";
+import { existsSync, statSync } from "node:fs";
+import { resolve } from "node:path";
+import type { GuardResult, ToolCall } from "./types.ts";
+import {
+  extractPath,
+  isInsideWorkspace,
+  isInsideWorkspacePhysical,
+  resolveLexical,
+  resolvePhysical,
+} from "./paths.ts";
+import { isProtectedPath, protectedReason } from "./protected.ts";
 
 export type ClassifierInput = {
   call: ToolCall;
   workspace: string;
-  policy?: PolicyConfig;
 };
 
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 
-const BLOCK_PATTERNS: Array<{ re: RegExp; reason: string }> = [
-  { re: /(^|[\s;|&])rm\s+(-[a-zA-Z]*[rR][a-zA-Z]*\s+)*-[a-zA-Z]*f[a-zA-Z]*\s+\/(\s|$)/, reason: "rm -rf pada root filesystem diblokir" },
-  { re: /(^|[\s;|&])rm\s+(-[a-zA-Z]+\s+)*~(\s|$)/, reason: "rm pada home directory diblokir" },
-  { re: /(^|[\s;|&])rm\s+(-[a-zA-Z]+\s+)*\$HOME(\s|$)/, reason: "rm pada $HOME diblokir" },
-  { re: /(^|[\s;|&])mkfs(\.[a-z0-9]+)?(\s|$)/, reason: "mkfs memformat filesystem dan diblokir" },
-  { re: /\bdd\b[^\n]*\bof=\/dev\//, reason: "dd menulis langsung ke block device dan diblokir" },
-  { re: /:\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:/, reason: "fork bomb diblokir" },
-  { re: /\b(curl|wget)\b[^\n]*\|\s*(sh|bash|zsh)\b/, reason: "pipe dari network ke shell diblokir" },
-  { re: /\bfind\b[^\n]*\s-delete\b/, reason: "find -delete menghapus banyak target tanpa bisa di-undo" },
-  { re: /(^|[\s;|&])shred(\s|$)/, reason: "shred menghapus data secara permanen dan diblokir" },
+const BLOCK_PATTERNS: Array<{ id: string; re: RegExp; reason: string }> = [
+  { id: "block:rm-root", re: /(^|[\s;|&(])rm\s+(-[a-zA-Z]*[rR][a-zA-Z]*\s+)*-[a-zA-Z]*f[a-zA-Z]*\s+\/([\s;)|]|$)/, reason: "rm -rf pada root filesystem diblokir" },
+  { id: "block:rm-home", re: /(^|[\s;|&(])rm\s+(-[a-zA-Z]+\s+)*~([\s;)|]|$)/, reason: "rm pada home directory diblokir" },
+  { id: "block:rm-home-env", re: /(^|[\s;|&(])rm\s+(-[a-zA-Z]+\s+)*\$HOME([\s;)|]|$)/, reason: "rm pada $HOME diblokir" },
+  { id: "block:mkfs", re: /(^|[\s;|&(])mkfs(\.[a-z0-9]+)?([\s;)|]|$)/, reason: "mkfs memformat filesystem dan diblokir" },
+  { id: "block:dd-device", re: /\bdd\b[^\n]*\bof=\/dev\//, reason: "dd menulis langsung ke block device dan diblokir" },
+  { id: "block:fork-bomb", re: /:\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:/, reason: "fork bomb diblokir" },
+  { id: "block:network-pipe", re: /\b(curl|wget)\b[^\n]*\|\s*(sh|bash|zsh|dash|ksh)\b/, reason: "pipe dari network ke shell diblokir" },
+  { id: "block:find-delete", re: /\bfind\b[^\n]*\s-delete\b/, reason: "find -delete menghapus banyak target tanpa bisa di-undo" },
+  { id: "block:shred", re: /(^|[\s;|&(])shred([\s;)|]|$)/, reason: "shred menghapus data secara permanen dan diblokir" },
 ];
 
-const ASK_PATTERNS: Array<{ re: RegExp; reason: string }> = [
-  { re: /(^|[\s;|&])sudo(\s|$)/, reason: "sudo memerlukan persetujuan" },
-  { re: /(^|[\s;|&])git\s+push\b/, reason: "git push memerlukan persetujuan" },
-  { re: /(^|[\s;|&])ch(mod|own)\s+-R\b/, reason: "perubahan permission rekursif memerlukan persetujuan" },
-  { re: /(^|[\s;|&])kill\s+-9\s+-1(\s|$)/, reason: "membunuh semua proses memerlukan persetujuan" },
-  { re: /(^|[\s;|&])docker\s+system\s+prune\b/, reason: "docker system prune memerlukan persetujuan" },
+const ASK_PATTERNS: Array<{ id: string; re: RegExp; reason: string }> = [
+  { id: "ask:sudo", re: /(^|[\s;|&(])sudo([\s;)|]|$)/, reason: "sudo memerlukan persetujuan" },
+  { id: "ask:git-push", re: /(^|[\s;|&(])git\s+push\b/, reason: "git push memerlukan persetujuan" },
+  { id: "ask:chmod-recursive", re: /(^|[\s;|&(])ch(mod|own)\s+-R\b/, reason: "perubahan permission rekursif memerlukan persetujuan" },
+  { id: "ask:kill-all", re: /(^|[\s;|&(])kill\s+-9\s+-1([\s;)|]|$)/, reason: "membunuh semua proses memerlukan persetujuan" },
+  { id: "ask:docker-prune", re: /(^|[\s;|&(])docker\s+system\s+prune\b/, reason: "docker system prune memerlukan persetujuan" },
 ];
 
 const RM_ALLOWED_FLAGS = new Set([
@@ -34,6 +42,104 @@ const RM_ALLOWED_FLAGS = new Set([
 ]);
 
 const RM_UNSAFE_CHARS = /[*?[\]$`(){}~]/;
+
+/** Shells that can carry a payload in `-c`. */
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+
+/**
+ * Launchers that run another command. `nice`, `timeout`, `env` and friends
+ * take their own flags before the real command starts.
+ */
+const LAUNCHERS = new Set([
+  "nice", "nohup", "timeout", "env", "stdbuf", "ionice", "setsid",
+  "command", "builtin", "exec", "time", "xargs",
+]);
+
+/** Command substitution: `$(...)` and backticks (global match). */
+const SUBSTITUTION = /\$\(([^()]*(?:\([^()]*\)[^()]*)*)\)|`([^`]*)`/g;
+
+/**
+ * Strip a leading launcher and its flags so the real command becomes visible.
+ * Returns the remaining tokens, or null when nothing is left.
+ */
+function stripLaunchers(tokens: string[]): string[] {
+  let rest = tokens;
+  let guard = 0;
+
+  while (rest.length > 0 && guard < 10) {
+    guard += 1;
+    const head = rest[0];
+
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(head)) {
+      rest = rest.slice(1);
+      continue;
+    }
+
+    if (LAUNCHERS.has(head)) {
+      rest = rest.slice(1);
+      // Consume the launcher's own flags/assignments. `timeout` also takes a
+      // duration and `xargs` an optional command slot, both handled below.
+      while (rest.length > 0 && (rest[0].startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(rest[0]))) {
+        rest = rest.slice(1);
+      }
+      if (head === "timeout" && rest.length > 0 && /^[0-9]/.test(rest[0])) {
+        rest = rest.slice(1);
+      }
+      continue;
+    }
+
+    if (head === "sudo") {
+      rest = rest.slice(1);
+      while (rest.length > 0 && rest[0].startsWith("-")) rest = rest.slice(1);
+      continue;
+    }
+
+    break;
+  }
+
+  return rest;
+}
+
+/**
+ * Unwrap all levels of indirection in a segment: `bash -c "..."`, `eval "..."`,
+ * `sh -c '...'`, parenthesized subshell commands `(...)`, and all `$(...)`/backtick payloads.
+ * Returns all inner commands found.
+ */
+function unwrapAll(segment: string): string[] {
+  const inners: string[] = [];
+  const trimmed = segment.trim();
+
+  if (trimmed.startsWith("(") && trimmed.endsWith(")")) {
+    const inner = trimmed.slice(1, -1).trim();
+    if (inner.length > 0) inners.push(inner);
+  }
+
+  const tokens = tokenize(segment);
+
+  if (tokens.length > 0) {
+    const head = stripLaunchers(tokens);
+    if (head.length > 0) {
+      const program = head[0].split("/").pop() ?? head[0];
+      if (SHELLS.has(program)) {
+        const flagIndex = head.findIndex((token) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(token));
+        if (flagIndex !== -1 && head.length > flagIndex + 1) {
+          inners.push(unquote(head.slice(flagIndex + 1).join(" ")));
+        }
+      } else if (program === "eval" && head.length > 1) {
+        inners.push(unquote(head.slice(1).join(" ")));
+      }
+    }
+  }
+
+  for (const m of segment.matchAll(SUBSTITUTION)) {
+    const payload = m[1] ?? m[2];
+    if (payload && payload.trim()) {
+      inners.push(payload.trim());
+    }
+  }
+
+  return inners;
+}
 
 /** Split a shell command into segments on unquoted separators. */
 export function splitSegments(command: string): string[] {
@@ -133,48 +239,63 @@ function tokenize(segment: string): string[] {
   return tokens;
 }
 
-function classifyRm(segment: string, workspace: string): GuardResult | null {
-  let tokens = tokenize(segment);
-
-  while (tokens.length > 0 && (tokens[0] === "sudo" || tokens[0] === "command" || tokens[0] === "env" || tokens[0] === "nohup" || tokens[0] === "time")) {
-    tokens = tokens.slice(1);
-    while (tokens.length > 0 && (tokens[0].startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0]))) {
-      tokens = tokens.slice(1);
+function checkDelegatedRm(rawTokens: string[], program: string): GuardResult | null {
+  const execIndex = rawTokens.findIndex((t) => t === "-exec" || t === "-execdir");
+  if (execIndex !== -1) {
+    const executed = rawTokens.slice(execIndex + 1).map(unquote);
+    const verb = executed[0]?.split("/").pop() ?? executed[0];
+    if (verb === "rm" || verb === "unlink" || verb === "shred") {
+      return {
+        verdict: "block",
+        reason: "find -exec rm tidak dapat di-undo otomatis; jalankan ga trash <path> per target",
+        ruleId: "block:rm-find-exec",
+      };
     }
   }
 
-  if (tokens[0] !== "rm") return null;
+  const tokens = stripLaunchers(rawTokens);
+  if (program === "xargs") {
+    const verb = tokens[0]?.split("/").pop() ?? tokens[0];
+    if (verb === "rm" || verb === "unlink" || verb === "shred") {
+      return {
+        verdict: "block",
+        reason: "xargs rm mengambil target dari stdin dan tidak dapat diverifikasi; jalankan ga trash <path> per target",
+        ruleId: "block:rm-xargs",
+      };
+    }
+  }
 
+  return null;
+}
+
+function parseRmOperands(tokens: string[]): { operands: string[]; error?: GuardResult } {
   const operands: string[] = [];
   for (const token of tokens.slice(1)) {
     if (token.startsWith("-")) {
       if (!RM_ALLOWED_FLAGS.has(token)) {
         return {
-          verdict: "block",
-          reason: `rm dengan flag tidak dikenal (${token}); gunakan ga trash <path> per target`,
+          operands: [],
+          error: {
+            verdict: "block",
+            reason: `rm dengan flag tidak dikenal (${token}); gunakan ga trash <path> per target`,
+            ruleId: "block:rm-unknown-flag",
+          },
         };
       }
       continue;
     }
     operands.push(token);
   }
+  return { operands };
+}
 
-  if (operands.length === 0) {
-    return { verdict: "ask", reason: "rm tanpa operand memerlukan persetujuan" };
-  }
-  if (operands.length > 1) {
-    return {
-      verdict: "block",
-      reason: "rm dengan banyak target tidak dapat di-undo otomatis; jalankan ga trash <path> per target",
-    };
-  }
-
-  const raw = operands[0];
-  const stripped = unquote(raw);
+function classifySingleRmOperand(rawOperand: string, workspace: string): GuardResult {
+  const stripped = unquote(rawOperand);
   if (RM_UNSAFE_CHARS.test(stripped)) {
     return {
       verdict: "block",
-      reason: `rm target kompleks (${raw}) tidak dapat di-parse dengan aman; jalankan ga trash <path> per target`,
+      reason: `rm target kompleks (${rawOperand}) tidak dapat di-parse dengan aman; jalankan ga trash <path> per target`,
+      ruleId: "block:rm-complex-target",
     };
   }
 
@@ -184,6 +305,15 @@ function classifyRm(segment: string, workspace: string): GuardResult | null {
     return {
       verdict: "block",
       reason: `trash hanya mencakup workspace; ${target} berada di luar workspace`,
+      ruleId: "block:rm-outside",
+    };
+  }
+
+  if (isProtectedPath(workspace, target)) {
+    return {
+      verdict: "block",
+      reason: protectedReason(target),
+      ruleId: "block:rm-protected",
     };
   }
 
@@ -191,18 +321,484 @@ function classifyRm(segment: string, workspace: string): GuardResult | null {
     verdict: "allow",
     reason: "rewritten to trash",
     replacement: { kind: "trash", path: target },
+    ruleId: "rewrite:rm-trash",
   };
+}
+
+function classifyRm(segment: string, workspace: string): GuardResult | null {
+  const rawTokens = tokenize(segment);
+  const program = rawTokens[0]?.split("/").pop() ?? rawTokens[0];
+
+  const delegated = checkDelegatedRm(rawTokens, program);
+  if (delegated) return delegated;
+
+  const tokens = stripLaunchers(rawTokens);
+  if (tokens[0] !== "rm") return null;
+
+  const { operands, error } = parseRmOperands(tokens);
+  if (error) return error;
+
+  if (operands.length === 0) {
+    return { verdict: "ask", reason: "rm tanpa operand memerlukan persetujuan", ruleId: "ask:rm-no-operand" };
+  }
+  if (operands.length > 1) {
+    return {
+      verdict: "block",
+      reason: "rm dengan banyak target tidak dapat di-undo otomatis; jalankan ga trash <path> per target",
+      ruleId: "block:rm-multi-target",
+    };
+  }
+
+  return classifySingleRmOperand(operands[0], workspace);
 }
 
 const SEVERITY: Record<"allow" | "ask" | "block", number> = { allow: 0, ask: 1, block: 2 };
 
-function stricter(
-  a: { verdict: "allow" | "ask" | "block"; reason?: string; replacement?: { kind: "trash"; path: string } },
-  b: { verdict: "allow" | "ask" | "block"; reason?: string; replacement?: { kind: "trash"; path: string } },
-) {
+function stricter(a: GuardResult, b: GuardResult): GuardResult {
   return SEVERITY[b.verdict] > SEVERITY[a.verdict] ? b : a;
 }
 
+/** Commands whose arguments are written to (or renamed onto) the target path. */
+const WRITE_VERBS = new Set([
+  "tee", "cp", "mv", "install", "ln", "truncate", "dd", "sed", "perl",
+  "chmod", "chown", "touch", "mkdir", "rmdir", "unlink", "rm", "rsync",
+  "tar", "unzip", "patch", "shred",
+]);
+
+function readTargetToken(command: string, start: number): { target: string; end: number } {
+  let j = start;
+  while (j < command.length && (command[j] === ">" || command[j] === "|" || command[j] === "&")) {
+    j += 1;
+  }
+  while (j < command.length && /\s/.test(command[j])) {
+    j += 1;
+  }
+
+  let target = "";
+  let tQuote: '"' | "'" | null = null;
+  while (j < command.length) {
+    const tch = command[j];
+    if (tQuote !== null) {
+      if (tch === tQuote) {
+        tQuote = null;
+      } else {
+        target += tch;
+      }
+    } else if (tch === '"' || tch === "'") {
+      tQuote = tch;
+    } else if (/[\s;&|<>]/.test(tch)) {
+      break;
+    } else {
+      target += tch;
+    }
+    j += 1;
+  }
+  return { target: target.trim(), end: j };
+}
+
+/** Extract unquoted redirection target paths from a command string. */
+function extractUnquotedRedirects(command: string): string[] {
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  const targets: string[] = [];
+
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+
+    if (ch === ">") {
+      const { target, end } = readTargetToken(command, i + 1);
+      if (target.length > 0) targets.push(target);
+      i = end - 1;
+    }
+  }
+
+  return targets;
+}
+
+/**
+ * The guard must protect its own state. `write`/`edit` are checked by path in
+ * `classify`, but bash can reach the same files through redirection or a
+ * write-capable verb. This closes that route so the agent cannot forge
+ * approvals or erase the audit trail with a shell command.
+ */
+function classifyProtectedWrite(
+  command: string,
+  workspace: string,
+): GuardResult | null {
+  const blocked = (path: string): GuardResult => ({
+    verdict: "block",
+    reason: protectedReason(path),
+    ruleId: "block:protected-bash-write",
+  });
+
+  for (const raw of extractUnquotedRedirects(command)) {
+    const target = resolveLexical(workspace, unquote(raw));
+    if (isProtectedPath(workspace, target) || isProtectedPath(workspace, resolvePhysical(workspace, target))) {
+      return blocked(target);
+    }
+  }
+
+  for (const segment of splitSegments(command)) {
+    const tokens = tokenize(segment).map(unquote);
+    const verbIndex = tokens.findIndex((token) => WRITE_VERBS.has(basenameOf(token)));
+    if (verbIndex === -1) continue;
+
+    for (const rawToken of tokens.slice(verbIndex + 1)) {
+      let token = rawToken;
+      if (token.startsWith("of=")) token = token.slice(3);
+      else if (token.startsWith("--output=")) token = token.slice(9);
+      if (token.startsWith("-")) continue;
+      const target = resolveLexical(workspace, token);
+      if (isProtectedPath(workspace, target) || isProtectedPath(workspace, resolvePhysical(workspace, target))) {
+        return blocked(target);
+      }
+    }
+  }
+
+  return null;
+}
+
+function basenameOf(token: string): string {
+  const index = token.lastIndexOf("/");
+  return index === -1 ? token : token.slice(index + 1);
+}
+
+const SYSTEM_SINKS = new Set([
+  "/dev/null",
+  "/dev/zero",
+  "/dev/stdout",
+  "/dev/stderr",
+  "/dev/tty",
+]);
+
+function isSink(target: string): boolean {
+  return SYSTEM_SINKS.has(target) || /^&[0-9]+$/.test(target);
+}
+
+const WRITE_OVERWRITE_VERBS = new Set([
+  "cp", "mv", "install", "tee", "sed", "truncate", "dd",
+]);
+
+function extractSedTargets(args: string[]): string[] {
+  const hasInPlace = args.some(
+    (t) =>
+      t === "-i" ||
+      t.startsWith("-i") ||
+      t === "--in-place" ||
+      t.startsWith("--in-place="),
+  );
+  if (!hasInPlace) return [];
+
+  const nonFlags: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "-i") {
+      if (
+        i + 1 < args.length &&
+        (args[i + 1] === "''" || args[i + 1] === '""' || args[i + 1].startsWith("."))
+      ) {
+        i++;
+      }
+      continue;
+    }
+    if (a === "-e" || a === "-f") {
+      i++;
+      continue;
+    }
+    if (a.startsWith("-")) continue;
+    nonFlags.push(a);
+  }
+  const hasExplicitScript = args.some((t) => t === "-e" || t === "-f");
+  return hasExplicitScript ? nonFlags : nonFlags.slice(1);
+}
+
+function extractTruncateTargets(args: string[]): string[] {
+  const targets: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "-s" || a === "--size" || a === "-r" || a === "--reference") {
+      i++;
+      continue;
+    }
+    if (a.startsWith("-")) continue;
+    targets.push(a);
+  }
+  return targets;
+}
+
+function extractCpMvTargets(args: string[]): { targets: string[]; srcPath?: string } {
+  const targetDirIdx = args.findIndex((t) => t === "-t" || t === "--target-directory");
+  if (targetDirIdx !== -1 && targetDirIdx + 1 < args.length) {
+    return { targets: [args[targetDirIdx + 1]] };
+  }
+  const targetDirEq = args.find((t) => t.startsWith("--target-directory="));
+  if (targetDirEq) {
+    return { targets: [targetDirEq.slice("--target-directory=".length)] };
+  }
+  const nonFlags = args.filter((t) => !t.startsWith("-"));
+  if (nonFlags.length >= 2) {
+    return { targets: [nonFlags[nonFlags.length - 1]], srcPath: nonFlags[0] };
+  }
+  return { targets: [] };
+}
+
+function extractVerbTargets(verb: string, args: string[]): { targets: string[]; srcPath?: string } {
+  if (verb === "dd") {
+    const ofToken = args.find((t) => t.startsWith("of="));
+    return { targets: ofToken ? [ofToken.slice(3)] : [] };
+  }
+  if (verb === "sed") return { targets: extractSedTargets(args) };
+  if (verb === "truncate") return { targets: extractTruncateTargets(args) };
+  if (verb === "tee") return { targets: args.filter((t) => !t.startsWith("-")) };
+  if (verb === "cp" || verb === "mv" || verb === "install") return extractCpMvTargets(args);
+  return { targets: [] };
+}
+
+function checkTargetOverwrite(
+  workspace: string,
+  targetPath: string,
+  srcPath?: string,
+): GuardResult | null {
+  if (!targetPath) return null;
+  const clean = unquote(targetPath);
+  if (!clean || isSink(clean)) return null;
+
+  const target = resolveLexical(workspace, clean);
+
+  if (!isInsideWorkspace(workspace, target)) {
+    return {
+      verdict: "ask",
+      reason: `menulis di luar workspace: ${target}`,
+      ruleId: "ask:write-outside",
+    };
+  }
+
+  let effective = target;
+  try {
+    if (existsSync(target) && statSync(target).isDirectory() && srcPath) {
+      effective = resolve(target, basenameOf(srcPath));
+    }
+  } catch {}
+
+  const exists =
+    existsSync(effective) ||
+    existsSync(resolvePhysical(workspace, clean));
+
+  if (exists) {
+    return {
+      verdict: "ask",
+      reason: `menimpa file yang sudah ada: ${effective}`,
+      ruleId: "ask:overwrite",
+    };
+  }
+
+  return null;
+}
+
+function classifyOverwrite(
+  command: string,
+  workspace: string,
+): GuardResult | null {
+  for (const raw of extractUnquotedRedirects(command)) {
+    const res = checkTargetOverwrite(workspace, raw);
+    if (res) return res;
+  }
+
+  for (const segment of splitSegments(command)) {
+    const tokens = tokenize(segment).map(unquote);
+    const verbIndex = tokens.findIndex((token) => WRITE_OVERWRITE_VERBS.has(basenameOf(token)));
+    if (verbIndex === -1) continue;
+
+    const verb = basenameOf(tokens[verbIndex]);
+    const args = tokens.slice(verbIndex + 1);
+    const { targets, srcPath } = extractVerbTargets(verb, args);
+
+    for (const target of targets) {
+      const res = checkTargetOverwrite(workspace, target, srcPath);
+      if (res) return res;
+    }
+  }
+
+  return null;
+}
+
+const MAX_UNWRAP_DEPTH = 5;
+
+function isSoleShellWrapper(segment: string): boolean {
+  const trimmed = segment.trim();
+  if (trimmed.startsWith("(") && trimmed.endsWith(")")) return true;
+  const tokens = tokenize(segment);
+  if (tokens.length === 0) return false;
+  const head = stripLaunchers(tokens);
+  if (head.length < 2) return false;
+  const program = head[0].split("/").pop() ?? head[0];
+  if (SHELLS.has(program)) {
+    return head.some((t) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(t));
+  }
+  return program === "eval";
+}
+
+function classifyUnwrapped(
+  command: string,
+  workspace: string,
+  depth: number,
+): GuardResult | null {
+  if (depth >= MAX_UNWRAP_DEPTH) return null;
+  const segments = splitSegments(command);
+  for (const segment of segments) {
+    for (const inner of unwrapAll(segment)) {
+      const innerResult = classifyCommand(inner, workspace, depth + 1);
+      if (innerResult.verdict !== "allow") {
+        return { ...innerResult, ruleId: innerResult.ruleId ?? "block:wrapper" };
+      }
+      if (innerResult.replacement) {
+        if (isSoleShellWrapper(segment) && segments.length === 1) {
+          return innerResult;
+        }
+        return {
+          verdict: "block",
+          reason: "rm di dalam wrapper atau command substitution tidak dapat di-rewrite otomatis; jalankan ga trash <path> terpisah",
+          ruleId: "block:rm-wrapper",
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function classifyRmSegments(
+  segments: string[],
+  workspace: string,
+): { rmResult: GuardResult | null; rewriteable: boolean } {
+  let rmResult: GuardResult | null = null;
+  for (const segment of segments) {
+    const res = classifyRm(segment, workspace);
+    if (res) {
+      rmResult = res;
+      break;
+    }
+  }
+  const rewriteable = rmResult?.replacement !== undefined && segments.length === 1;
+  return { rmResult, rewriteable };
+}
+
+/**
+ * Classify a shell command, unwrapping all levels of indirection.
+ * Catches wrappers like `bash -c "rm -rf /"` and multi-substitution commands.
+ */
+function classifyCommand(
+  command: string,
+  workspace: string,
+  depth: number,
+): GuardResult {
+  const protectedWrite = classifyProtectedWrite(command, workspace);
+  if (protectedWrite) return protectedWrite;
+
+  const wrapper = classifyUnwrapped(command, workspace, depth);
+  if (wrapper && wrapper.verdict !== "allow") return wrapper;
+
+  for (const { id, re, reason } of BLOCK_PATTERNS) {
+    if (re.test(command)) return { verdict: "block", reason, ruleId: id };
+  }
+
+  const segments = splitSegments(command);
+  const { rmResult, rewriteable } = classifyRmSegments(segments, workspace);
+  const effectiveRm = wrapper?.replacement ? wrapper : rmResult;
+  const isRewriteable = wrapper?.replacement ? true : rewriteable;
+
+  const blockedRewrite: GuardResult | null =
+    effectiveRm?.replacement && !isRewriteable
+      ? {
+          verdict: "block",
+          reason: "rm yang dirangkai dengan perintah lain tidak dapat di-rewrite otomatis; jalankan ga trash <path> terpisah",
+          ruleId: "block:rm-chained",
+        }
+      : null;
+
+  const effective = blockedRewrite ?? effectiveRm;
+
+  for (const { id, re, reason } of ASK_PATTERNS) {
+    if (re.test(command)) {
+      if (!effective) return { verdict: "ask", reason, ruleId: id };
+      const merged = stricter(effective, { verdict: "ask", reason, ruleId: id });
+      if (merged.verdict === "ask" && effective.replacement && isRewriteable) {
+        return { ...merged, replacement: effective.replacement };
+      }
+      return merged;
+    }
+  }
+
+  const overwrite = classifyOverwrite(command, workspace);
+  if (overwrite) return effective ? stricter(effective, overwrite) : overwrite;
+
+  return effective ?? { verdict: "allow", reason: "default allow", ruleId: "allow:default" };
+}
+
+function classifyWriteTool(call: ToolCall, workspace: string): GuardResult {
+  const rawPath = extractPath(call.input);
+  if (!rawPath) {
+    return {
+      verdict: "ask",
+      reason: "path tidak diketahui; persetujuan diperlukan",
+      ruleId: "ask:unknown-path",
+    };
+  }
+
+  const lexical = resolveLexical(workspace, rawPath);
+
+  // The store must be immutable for the guarded agent: forging
+  // approvals.json silently unlocks every ask-tier control, and writing
+  // audit.jsonl lets the agent erase its own trail.
+  if (isProtectedPath(workspace, lexical) || isProtectedPath(workspace, resolvePhysical(workspace, rawPath))) {
+    return {
+      verdict: "block",
+      reason: protectedReason(lexical),
+      ruleId: "block:protected-path",
+    };
+  }
+
+  // A symlink inside the workspace can point outside it. The lexical check
+  // alone would call that "inside the workspace" and allow the write.
+  if (!isInsideWorkspacePhysical(workspace, rawPath)) {
+    return {
+      verdict: "ask",
+      reason: `menulis di luar workspace: ${resolvePhysical(workspace, rawPath)}`,
+      ruleId: "ask:write-outside",
+    };
+  }
+
+  if (isInsideWorkspace(workspace, lexical)) {
+    return { verdict: "allow", reason: "menulis di dalam workspace", ruleId: "allow:write-inside" };
+  }
+  return {
+    verdict: "ask",
+    reason: `menulis di luar workspace: ${lexical}`,
+    ruleId: "ask:write-outside",
+  };
+}
+
+/**
+ * Pure classifier: maps an agent tool call to allow | ask | block.
+ *
+ * @param input - The tool call and workspace root
+ * @returns GuardResult with verdict, reason, and optional rewrite replacement
+ */
 export function classify(input: ClassifierInput): GuardResult {
   const { call, workspace } = input;
 
@@ -210,53 +806,14 @@ export function classify(input: ClassifierInput): GuardResult {
     return { verdict: "allow", reason: "read-only tool" };
   }
 
-  if (call.toolName === "write" || call.toolName === "edit") {
-    const rawPath = call.input.path;
-    if (typeof rawPath !== "string" || rawPath.length === 0) {
-      return { verdict: "ask", reason: "path tidak diketahui; persetujuan diperlukan" };
-    }
-    const resolved = resolveLexical(workspace, rawPath);
-    if (isInsideWorkspace(workspace, resolved)) {
-      return { verdict: "allow", reason: "menulis di dalam workspace" };
-    }
-    return {
-      verdict: "ask",
-      reason: `menulis di luar workspace: ${resolved}`,
-    };
+  if (call.toolName === "write" || call.toolName === "edit" || call.toolName === "patch") {
+    return classifyWriteTool(call, workspace);
   }
 
   const command = call.input.command;
-  if (typeof command !== "string") {
-    return { verdict: "allow", reason: "default allow" };
-  }
-  if (command.trim().length === 0) {
-    return { verdict: "allow", reason: "default allow" };
+  if (typeof command !== "string" || command.trim().length === 0) {
+    return { verdict: "allow", reason: "default allow", ruleId: "allow:default" };
   }
 
-  for (const { re, reason } of BLOCK_PATTERNS) {
-    if (re.test(command)) return { verdict: "block", reason };
-  }
-
-  const rmResult = (() => {
-    for (const segment of splitSegments(command)) {
-      const result = classifyRm(segment, workspace);
-      if (result) return result;
-    }
-    return null;
-  })();
-
-  for (const { re, reason } of ASK_PATTERNS) {
-    if (re.test(command)) {
-      if (!rmResult) return { verdict: "ask", reason };
-      const merged = stricter(rmResult, { verdict: "ask", reason });
-      if (merged.verdict === "ask" && rmResult.replacement) {
-        return { ...merged, replacement: rmResult.replacement };
-      }
-      return merged;
-    }
-  }
-
-  if (rmResult) return rmResult;
-
-  return { verdict: "allow", reason: "default allow" };
+  return classifyCommand(command, workspace, 0);
 }

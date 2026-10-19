@@ -47,14 +47,23 @@ Aturan emas: **core tidak pernah import code harness**.
 |--------|--------|----------|
 | allow  | `ls`, `cat`, `git status`, tulis di workspace, perintah tak dikenal | langsung jalan |
 | ask    | `DELETE`/`UPDATE` SQL, tulis di luar workspace, `git push`, `sudo` | approval per Scope, sekali saja |
-| block  | `rm -rf /`, `mkfs`, `curl \| bash`, `DROP`/`TRUNCATE`/`ALTER` | ditolak, tidak bisa override |
+| block  | `rm -rf /`, `mkfs`, `curl \| bash`, `DROP`/`TRUNCATE`/`ALTER`, tulis ke `.guardian-angel/**` atau `.git/**` | ditolak, tidak bisa override |
 
 Default untuk perintah bash yang tidak cocok aturan apa pun adalah **allow** — guard ini menargetkan kesalahan, bukan menggantikan permission system.
 
+**Scope approval** = `workspace \0 session \0 path \0 rule`. Satu approval hanya berlaku untuk rule yang menghasilkannya: menyetujui `git push` tidak ikut menyetujui `sudo`, `chmod -R`, atau `docker prune`. Sebelumnya scope hanya `workspace \0 session \0 path`, sehingga satu approval membuka semua perintah `ask`.
+
+**Store tidak bisa diubah agen.** `.guardian-angel/` (audit, approvals, trash) dan `.git/` ditolak untuk `write`, `edit`, redirection (`>`/`>>`), verb penulis (`tee`, `cp`, `mv`, `truncate`, `ln`, `sed -i`, …), `rm`, dan `ga trash`. Membaca store tetap `allow`.
+
+**Residual:** lapisan ini adalah pertahanan berlapis, bukan isolasi. Bila agen mengeksekusi interpreter yang belum tertangkap classifier (`python3 -c`, base64 — lihat `KNOWN BYPASS` di corpus redteam) ia masih bisa menulis `approvals.json` secara langsung. Karena secret apa pun yang bisa dibaca agen juga bisa dipalsukan, penulisan store yang sebenarnya harus dicegah di level OS (user terpisah, mount read-only, atau sandbox), bukan di dalam proses yang sama.
+
+**Wrapper di-unwrap.** `bash -c "…"`, `sh -c`, `zsh -c`, `eval "…"`, `$(…)` dan backtick ditembus sampai 5 level, lalu isinya diklasifikasi ulang. Launcher (`nice`, `timeout`, `nohup`, `env`, `command`, …) transparan terhadap aturan `rm`. `xargs rm` dan `find -exec rm` selalu `block` karena daftar targetnya tidak dapat diperiksa.
+
 ## Undo (hybrid)
 
-- `rm` target tunggal yang terparse bersih → di-rewrite menjadi `ga trash <path>` (O(1), tanpa copy data).
-- `rm` kompleks (glob, substitusi, pipe, multi-target) → block + panduan `ga trash <path>` per target.
+- `rm` target tunggal yang terparse bersih **dan merupakan seluruh command** → di-rewrite menjadi `ga trash <path>` (O(1), tanpa copy data).
+- `rm` yang dirangkai (`rm x && npm test`, `cd sub && rm x`, pipe, redirection) → block. Rewrite hanya mengganti string command, jadi merangkai akan menghilangkan perintah lain atau me-resolve path relatif ke direktori yang salah.
+- `rm` kompleks (glob, substitusi, multi-target) → block + panduan `ga trash <path>` per target.
 - `restore()` mengembalikan; `gc()` menghapus item lebih tua dari 24 jam.
 
 ## CLI `ga`
@@ -132,15 +141,40 @@ macOS tidak pernah menjalankan test destruktif. Satu-satunya eksekusi di host ad
 
 ## Batas POC (jujur)
 
-- Bukan parser shell POSIX penuh. ANSI-C quoting, base64/eval, interpreter payload (`python3 -c`), `xargs`, `ssh`, dan path absolut (`/bin/rm`) **belum** tertangkap — semuanya tercatat sebagai `KNOWN BYPASS` di `test/fixtures/redteam.jsonl`.
-- `resolvePath` leksikal; symlink di **komponen path** ditolak fail-closed, tetapi symlink bukan sandbox.
-- Deteksi SQL berbasis pola; `-f/--file` dan redirect file selalu `ask` karena classifier murni tidak membaca file. Bukan pengganti DB guard.
+- Bukan parser shell POSIX penuh. Masih `KNOWN BYPASS` (tercatat di `test/fixtures/redteam.jsonl`): ANSI-C quoting, base64 yang di-decode lalu di-pipe, interpreter payload (`python3 -c`), `ssh`, dan path absolut (`/bin/rm`). `bash -c`, `eval`, `$(…)`, `xargs`, dan `find -exec` sudah ditangani.
+- `write`/`edit` memakai resolusi fisik: symlink di komponen path yang sudah ada diikuti, dan target yang keluar workspace menjadi `ask` (bukan `allow`). `rm`/`ga trash` menolak symlink secara fail-closed. Symlink tetap bukan sandbox.
+- Deteksi SQL berbasis pola; **semua** payload (`-e`/`-c`/`--execute`, berulang) diklasifikasi dan diambil yang terberat, tapi `-f/--file` dan redirect file selalu `ask` karena classifier murni tidak membaca file. Bukan pengganti DB guard.
 - Trash harus satu volume dengan workspace (EXDEV → error jelas, tanpa fallback copy+delete).
-- MCP interception, adapter OpenCode/Codex/Claude, LLM advisor, CoW snapshot, dan Windows belum ada.
+- MCP interception, adapter Codex/Claude, LLM advisor, CoW snapshot, dan Windows belum ada.
 - Asumsi single-process: `approvals.json` tidak memakai lock lintas proses.
+
+## Adapter OpenCode v1
+
+Guardian Angel menyediakan integrasi untuk **OpenCode 1.19.3**:
+
+- **Server Plugin** (`src/adapters/opencode/server.ts`): Memakai hook `tool.execute.before` untuk menghentikan perintah destruktif sebelum dieksekusi, merestrukturisasi perintah `rm` menjadi `ga trash`, serta meneruskan perintah `ask` ke TUI bridge.
+- **TUI Plugin** (`src/adapters/opencode/tui.ts`): Menampilkan dialog konfirmasi native `ui.DialogConfirm` di antarmuka TUI OpenCode dan mencatat persetujuan 24 jam per-rule.
+- **File-IPC Bridge** (`src/adapters/opencode/ipc.ts`): Pertukaran request/response antar-proses dengan timeout fail-closed dan heartbeat deteksi status TUI.
+- **Verifikasi Smoke Test**:
+  - `bun test test/smoke-20-cases.test.ts` — 20 kasus destruktif (quoted path `rm`, overwrite `>`, SQL DROP, wrappers, chained, path tampering).
+  - `bun run test:smoke` (`scripts/test-opencode-smoke.ts`) — Uji end-to-end langsung dengan CLI OpenCode dan agen aktif di sandbox disposable dengan verifikasi integritas canary.
+
+### Pemasangan di OpenCode
+
+1. **Server Plugin**: Daftarkan di `.opencode/plugin/guardian.js` atau `opencode.json`:
+   ```js
+   import { GuardianAngelServer } from "guardian-angel-poc/opencode-server";
+   export default GuardianAngelServer;
+   ```
+2. **TUI Plugin**: Daftarkan di `tui.json`:
+   ```json
+   {
+     "plugin": ["guardian-angel-poc/opencode-tui"]
+   }
+   ```
 
 ## Peta jalan
 
 1. ✅ Core (classifier + SQL + policy + trash + approvals + audit + guard) + adapter Senpi + CLI + redteam corpus
-2. Adapter OpenCode v1 + pre-LLM interception opsional
+2. ✅ Adapter OpenCode v1 (Server Plugin + TUI Plugin DialogConfirm + File-IPC Bridge + 20-case smoke test)
 3. Adapter harness lain (Codex, Claude Code)

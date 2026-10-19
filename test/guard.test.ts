@@ -82,13 +82,15 @@ describe("ask", () => {
 
   test("denied confirmation yields block and records no grant", async () => {
     const { deps, recorded, workspace } = harness({ approve: false });
+
+    const result = await guard(bash("sudo ls"), deps);
+
     const scope: Scope = {
       workspace,
       sessionId: "session-1",
       scopePath: workspace,
+      ruleId: result.ruleId ?? "ask:sudo",
     };
-
-    const result = await guard(bash("sudo ls"), deps);
 
     expect(result.verdict).toBe("block");
     expect(deps.approvals.check(scope, deps.now())).toBe(false);
@@ -99,6 +101,46 @@ describe("ask", () => {
     const { deps, recorded } = harness({ approve: true });
     await guard(bash("sudo ls"), deps);
     expect(recorded.filter((e) => e.tier === "ask")).toHaveLength(1);
+  });
+
+  test("REGRESSION: one approval does not unlock a different rule", async () => {
+    const { deps } = harness({ approve: true });
+    let confirmCalls = 0;
+    deps.confirm = async () => {
+      confirmCalls += 1;
+      return true;
+    };
+
+    await guard(bash("git push origin main"), deps);
+    await guard(bash("chmod -R 777 ."), deps);
+    await guard(bash("docker system prune -af"), deps);
+
+    expect(confirmCalls).toBe(3);
+  });
+
+  test("REGRESSION: re-running the same rule reuses its approval", async () => {
+    const { deps } = harness({ approve: true });
+    let confirmCalls = 0;
+    deps.confirm = async () => {
+      confirmCalls += 1;
+      return true;
+    };
+
+    await guard(bash("git push origin main"), deps);
+    await guard(bash("git push origin main"), deps);
+
+    expect(confirmCalls).toBe(1);
+  });
+
+  test("REGRESSION: a cached approval still writes an audit line", async () => {
+    const { deps, recorded } = harness({ approve: true });
+
+    await guard(bash("sudo ls"), deps);
+    const afterGrant = recorded.length;
+    await guard(bash("sudo ls"), deps);
+
+    expect(recorded.length).toBeGreaterThan(afterGrant);
+    expect(recorded.at(-1)?.tier).toBe("ask");
   });
 });
 
@@ -274,5 +316,42 @@ describe("policy integration", () => {
 
     expect(second.verdict).toBe("allow");
     expect(second.replacement).toEqual({ kind: "trash", path: join(workspace, "build") });
+  });
+
+  test("REGRESSION: filePath input scopes approval to the specific path, not workspace root", async () => {
+    let capturedScope: Scope | undefined;
+    const { deps, workspace } = harness({ approve: true });
+    const originalGrant = deps.approvals.grant.bind(deps.approvals);
+    deps.approvals.grant = (scope, now, reason) => {
+      capturedScope = scope;
+      originalGrant(scope, now, reason);
+    };
+
+    await guard(
+      { toolName: "write", input: { filePath: "/etc/hosts", content: "x" } },
+      deps,
+    );
+
+    expect(capturedScope).toBeDefined();
+    expect(capturedScope?.scopePath).toBe("/etc/hosts");
+    expect(capturedScope?.scopePath).not.toBe(workspace);
+  });
+
+  test("REGRESSION: dangling symlink pointing outside workspace resolves to outside path", async () => {
+    const { deps, recorded, workspace } = harness({ approve: false });
+    const linkPath = join(workspace, "dangling_link");
+    const { symlinkSync } = await import("node:fs");
+    symlinkSync("/etc/dangling_secret", linkPath);
+
+    const result = await guard(
+      { toolName: "write", input: { filePath: linkPath, content: "evil" } },
+      deps,
+    );
+
+    expect(result.verdict).toBe("block");
+    expect(result.reason).toContain("ditolak oleh user");
+    expect(result.ruleId).toBe("ask:write-outside");
+    expect(recorded[0].tier).toBe("block");
+    expect(recorded[0].reason).toBe("ditolak oleh user");
   });
 });

@@ -63,6 +63,46 @@ describe("redact", () => {
     expect(result).not.toContain("token=b");
     expect(result.match(/\[REDACTED\]/g)).toHaveLength(2);
   });
+
+  describe("REGRESSION: secret shapes that used to leak", () => {
+    const leaks: Array<[string, string]> = [
+      ["AWS_SECRET_ACCESS_KEY=abc123", "abc123"],
+      ["AWS_ACCESS_KEY_ID=AKIA123", "AKIA123"],
+      ["GITHUB_TOKEN=ghp_abc", "ghp_abc"],
+      ["STRIPE_SECRET_KEY=sk_live_x", "sk_live_x"],
+      ["DB_PASSWORD=hunter2", "hunter2"],
+      ["CLIENT_SECRET=shh", "shh"],
+      ["Authorization: Bearer tok123", "tok123"],
+      ["curl -H 'Authorization: Bearer tok123' https://x", "tok123"],
+      ["mysql -p hunter2", "hunter2"],
+      ["mysql -phunter2", "hunter2"],
+      ["mysql --password hunter2", "hunter2"],
+      ['{"password":"hunter2"}', "hunter2"],
+      ["psql postgres://user:secret@localhost/db", "secret"],
+      ["git clone https://user:token123@github.com/x/y", "token123"],
+    ];
+
+    for (const [input, secret] of leaks) {
+      test(`redacts ${input}`, () => {
+        const result = redact(input);
+        expect(result).not.toContain(secret);
+        expect(result).toContain("[REDACTED]");
+      });
+    }
+
+    test("keeps the key name visible", () => {
+      expect(redact("AWS_SECRET_ACCESS_KEY=abc123")).toContain("AWS_SECRET_ACCESS_KEY=");
+      expect(redact("Authorization: Bearer tok123")).toContain("Authorization:");
+    });
+
+    test("does not redact ordinary assignments", () => {
+      expect(redact("NORMAL_VAR=hello")).toBe("NORMAL_VAR=hello");
+      expect(redact("echo $HOME")).toBe("echo $HOME");
+      expect(redact("ls -la src")).toBe("ls -la src");
+      expect(redact("mkdir -p /tmp/build/dir")).toBe("mkdir -p /tmp/build/dir");
+      expect(redact("git log -p src/file.ts")).toBe("git log -p src/file.ts");
+    });
+  });
 });
 
 describe("appendAudit", () => {

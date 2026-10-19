@@ -104,8 +104,18 @@ function patternCovers(candidate: string | undefined, target: string | undefined
   return globToRegExp(candidate).test(target);
 }
 
-function couldWeakenBuiltinBlock(rule: PolicyRule): boolean {
-  if (TIER_RANK[rule.tier] >= TIER_RANK.block) return false;
+/**
+ * True when a project rule would grant `allow` to commands that a builtin
+ * `block` rule protects.
+ *
+ * Only `allow` is dangerous. `ask` and `block` add caution rather than remove
+ * it, and severity ordering already lets a builtin `block` win over them — so
+ * clamping those to `block` only breaks the user's intent (`{tool:"bash",
+ * tier:"ask"}` means "review every bash command", not "block every bash
+ * command").
+ */
+function weakensBuiltinBlock(rule: PolicyRule): boolean {
+  if (rule.tier !== "allow") return false;
   for (const builtin of BUILTIN_RULES) {
     if (builtin.tier !== "block") continue;
     const coversTool = patternCovers(rule.match.tool, builtin.match.tool);
@@ -123,7 +133,7 @@ export function mergePolicy(layers: PolicyLayer[]): LoadedPolicy {
   for (const layer of layers) {
     if (layer.source === "builtin") continue;
     for (const rule of layer.config.rules) {
-      if (layer.source === "project" && couldWeakenBuiltinBlock(rule)) {
+      if (layer.source === "project" && weakensBuiltinBlock(rule)) {
         warnings.push(
           `project cannot lower block: ${rule.reason ?? rule.match.command ?? "rule"}`,
         );

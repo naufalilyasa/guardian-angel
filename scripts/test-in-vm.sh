@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VM="${GA_VM:-ga-wave1}"
+VM="${1:-${GA_VM:-ga-proof}}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 
@@ -31,6 +31,18 @@ limactl shell "$VM" -- bash -lc '
     echo "read-only mount: OK"
   fi
 
+  # A stale VM can be mounted to a directory that no longer exists on the
+  # host (e.g. a deleted worktree). virtiofs then shows an empty mount and the
+  # suite would "pass" against nothing, so refuse to continue.
+  echo "=== mount content check"
+  if [ ! -f /mnt/guardian-angel/package.json ]; then
+    echo "FATAL: /mnt/guardian-angel has no package.json." >&2
+    echo "The VM mount is stale or points at a deleted worktree." >&2
+    echo "Recreate the VM with: limactl delete <vm> && scripts/test-in-vm.sh" >&2
+    exit 1
+  fi
+  echo "mount content: OK"
+
   echo "=== canary"
   CANARY=/tmp/ga-canary
   rm -f "$CANARY"
@@ -45,7 +57,8 @@ limactl shell "$VM" -- bash -lc '
   bun install --silent
 
   echo "=== typecheck"
-  ./node_modules/.bin/tsc --noEmit
+  # tsc resolves through a node shebang; the bun binary alone is not enough.
+  bun x tsc --noEmit
 
   echo "=== tests"
   bun test

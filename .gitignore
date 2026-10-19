@@ -1,3 +1,4 @@
 node_modules/
 .guardian-angel/
 .omo/evidence/
+.DS_Store

@@ -204,6 +204,62 @@ describe("mergePolicy", () => {
     expect(matchRule(merged.rules, { tool: "bash", command: "mkfs.ext4 /dev/sda" })?.tier).toBe("block");
   });
 
+  test("REGRESSION: a broad project ask rule stays ask, it is not inverted to block", () => {
+    const layers: PolicyLayer[] = [
+      { source: "builtin", config: { rules: BUILTIN_RULES } },
+      {
+        source: "project",
+        config: { rules: [{ match: { tool: "bash" }, tier: "ask", reason: "review every bash" }] },
+      },
+    ];
+    const merged = mergePolicy(layers);
+
+    expect(matchRule(merged.rules, { tool: "bash", command: "ls -la" })?.tier).toBe("ask");
+    expect(matchRule(merged.rules, { tool: "bash", command: "npm test" })?.tier).toBe("ask");
+    expect(merged.warnings).toHaveLength(0);
+  });
+
+  test("REGRESSION: the documented `rm -rf *` -> ask example actually asks", () => {
+    const layers: PolicyLayer[] = [
+      { source: "builtin", config: { rules: BUILTIN_RULES } },
+      {
+        source: "project",
+        config: {
+          rules: [
+            { match: { tool: "bash", command: "rm -rf *" }, tier: "ask", reason: "hapus rekursif" },
+          ],
+        },
+      },
+    ];
+    const merged = mergePolicy(layers);
+
+    expect(matchRule(merged.rules, { tool: "bash", command: "rm -rf ./build" })?.tier).toBe("ask");
+    expect(matchRule(merged.rules, { tool: "bash", command: "rm -rf node_modules" })?.tier).toBe("ask");
+    expect(merged.warnings).toHaveLength(0);
+  });
+
+  test("REGRESSION: a broad ask rule never outranks a builtin block", () => {
+    const layers: PolicyLayer[] = [
+      { source: "builtin", config: { rules: BUILTIN_RULES } },
+      { source: "project", config: { rules: [{ match: { tool: "bash" }, tier: "ask" }] } },
+    ];
+    const merged = mergePolicy(layers);
+
+    expect(matchRule(merged.rules, { tool: "bash", command: "rm -rf /" })?.tier).toBe("block");
+    expect(matchRule(merged.rules, { tool: "bash", command: "mkfs.ext4 /dev/sda1" })?.tier).toBe("block");
+  });
+
+  test("REGRESSION: a broad project block rule still blocks", () => {
+    const layers: PolicyLayer[] = [
+      { source: "builtin", config: { rules: BUILTIN_RULES } },
+      { source: "project", config: { rules: [{ match: { tool: "bash" }, tier: "block" }] } },
+    ];
+    const merged = mergePolicy(layers);
+
+    expect(matchRule(merged.rules, { tool: "bash", command: "ls -la" })?.tier).toBe("block");
+    expect(merged.warnings).toHaveLength(0);
+  });
+
   test("a specific project rule may still allow a non-builtin command", () => {
     const layers: PolicyLayer[] = [
       { source: "builtin", config: { rules: BUILTIN_RULES } },

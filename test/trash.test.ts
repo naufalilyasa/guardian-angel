@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -73,6 +74,24 @@ describe("safeDelete", () => {
     expect(() => safeDelete(workspace, ".")).toThrow(/GA_TRASH_REFUSED/);
   });
 
+  test("REGRESSION: refuses to trash the guardian-angel store", () => {
+    const { workspace } = sandbox();
+    ensureStore(workspace);
+    const audit = join(workspace, ".guardian-angel", "audit.jsonl");
+    writeFileSync(audit, "{}\n", "utf8");
+
+    expect(() => safeDelete(workspace, ".guardian-angel/audit.jsonl")).toThrow(/GA_TRASH_REFUSED/);
+    expect(() => safeDelete(workspace, ".guardian-angel")).toThrow(/GA_TRASH_REFUSED/);
+    expect(existsSync(audit)).toBe(true);
+  });
+
+  test("REGRESSION: refuses to trash .git", () => {
+    const { workspace } = sandbox();
+    mkdirSync(join(workspace, ".git"), { recursive: true });
+    expect(() => safeDelete(workspace, ".git")).toThrow(/GA_TRASH_REFUSED/);
+    expect(existsSync(join(workspace, ".git"))).toBe(true);
+  });
+
   test("refuses a symlink", () => {
     const { workspace, outside } = sandbox();
     const target = join(outside, "real.txt");
@@ -99,7 +118,7 @@ describe("safeDelete", () => {
     writeFileSync(join(workspace, "nested", "deep.txt"), "deep", "utf8");
     const id = safeDelete(workspace, "nested/deep.txt");
 
-    const { rmSync } = require("node:fs") as typeof import("node:fs");
+
     rmSync(join(workspace, "nested"), { recursive: true, force: true });
     symlinkSync(outside, join(workspace, "nested"), "dir");
 
@@ -143,7 +162,7 @@ describe("restore", () => {
     mkdirSync(join(workspace, "nested"));
     writeFileSync(join(workspace, "nested", "deep.txt"), "deep", "utf8");
     const id = safeDelete(workspace, "nested/deep.txt");
-    const { rmSync } = require("node:fs") as typeof import("node:fs");
+
     rmSync(join(workspace, "nested"), { recursive: true, force: true });
 
     restore(workspace, id);

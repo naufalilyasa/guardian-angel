@@ -5,14 +5,24 @@ import type {
   ToolCallEventResult,
 } from "@code-yeongyu/senpi";
 import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import { guard } from "../core/guard.ts";
-import { loadPolicyFromFiles } from "../core/policy.ts";
+import { BUILTIN_RULES, loadPolicyFromFiles } from "../core/policy.ts";
 import { createApprovalStore } from "../core/approvals.ts";
 import { createAuditSink } from "../core/audit.ts";
 import { ensureStore } from "../core/store.ts";
 import type { GuardResult, ToolCall } from "../core/types.ts";
 
 const GUARDED_TOOLS = new Set(["bash", "write", "edit"]);
+
+/**
+ * Per-process fallback when the harness cannot provide a session id. A shared
+ * constant would make every session reuse the same approvals.
+ */
+const FALLBACK_SESSION_ID = `ga-${randomUUID()}`;
+
+/** `ensureStore` only needs to run once per workspace per process. */
+const preparedWorkspaces = new Set<string>();
 
 export function toToolCall(event: ToolCallEvent): ToolCall | null {
   if (!GUARDED_TOOLS.has(event.toolName)) return null;
@@ -37,6 +47,25 @@ export type AdapterDeps = {
   loadPolicy?: typeof loadPolicyFromFiles;
 };
 
+function resolveSessionId(ctx: ExtensionContext): string {
+  try {
+    return ctx.sessionManager.getSessionId() || FALLBACK_SESSION_ID;
+  } catch {
+    return FALLBACK_SESSION_ID;
+  }
+}
+
+function resolvePolicy(loadPolicy: typeof loadPolicyFromFiles, workspace: string) {
+  try {
+    return loadPolicy({ workspace });
+  } catch {
+    return {
+      rules: [...BUILTIN_RULES],
+      warnings: ["policy load failed; falling back to builtin rules"],
+    };
+  }
+}
+
 export function createHandler(deps: AdapterDeps) {
   const guardFn = deps.guardFn ?? guard;
   const loadPolicy = deps.loadPolicy ?? loadPolicyFromFiles;
@@ -49,21 +78,18 @@ export function createHandler(deps: AdapterDeps) {
     if (!call) return undefined;
 
     const workspace = ctx.cwd;
-    let sessionId = "unknown-session";
-    try {
-      sessionId = ctx.sessionManager.getSessionId();
-    } catch {
-      sessionId = "unknown-session";
-    }
+    const sessionId = resolveSessionId(ctx);
+    const policy = resolvePolicy(loadPolicy, workspace);
 
-    let policy;
-    try {
-      policy = loadPolicy({ workspace });
-    } catch {
-      policy = { rules: [], warnings: ["policy load failed"] };
+    if (!preparedWorkspaces.has(workspace)) {
+      try {
+        ensureStore(workspace);
+        preparedWorkspaces.add(workspace);
+      } catch {
+        // A store we cannot prepare must not break the tool call; the audit
+        // sink still fails loudly on its own if the store is unusable.
+      }
     }
-
-    ensureStore(workspace);
 
     const result: GuardResult = await guardFn(call, {
       workspace,
@@ -83,6 +109,8 @@ export function createHandler(deps: AdapterDeps) {
     }
 
     if (result.replacement && event.toolName === "bash") {
+      // In-place rewrite of command payload per Senpi extension contract (ADR 0006).
+      // The mutated event.input is executed by the Senpi tool runner.
       event.input.command = renderReplacement(result.replacement, deps.pkgRoot);
     }
 

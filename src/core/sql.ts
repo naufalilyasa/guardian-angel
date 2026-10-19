@@ -74,12 +74,14 @@ function classifyPayload(sql: string): SqlVerdict {
     return { verdict: "ask", reason: "query tidak dapat diparse" };
   }
 
-  let worst: SqlVerdict = { verdict: "allow", reason: "no statement" };
+  let worst: SqlVerdict | null = null;
   for (const statement of statements) {
     const result = classifyStatement(statement);
-    if (SEVERITY[result.verdict] > SEVERITY[worst.verdict]) worst = result;
+    if (worst === null || SEVERITY[result.verdict] > SEVERITY[worst.verdict]) {
+      worst = result;
+    }
   }
-  return worst;
+  return worst ?? { verdict: "ask", reason: "query tidak dapat diparse" };
 }
 
 function unquote(token: string): string {
@@ -141,39 +143,96 @@ function findClient(tokens: string[]): { index: number; client: string } | null 
   return null;
 }
 
-function payloadFromArgs(client: string, args: string[]): { sql: string | null; fromFile: boolean } {
+type Payloads = {
+  sql: string[];
+  fromFile: boolean;
+  /** True when the client was invoked with more than one inline payload. */
+  multiple: boolean;
+};
+
+/**
+ * Collect *every* inline payload, not just the first one. A client accepts
+ * repeated `-e`/`-c`/`--execute` flags and runs them in order, so stopping at
+ * the first would let `psql -c "SELECT 1" -c "DROP TABLE t"` look harmless.
+ */
+function payloadFromArgs(client: string, args: string[]): Payloads {
   const equalsFlags = new Set(["-e", "--execute", "-c", "--command", "--eval"]);
+  const sql: string[] = [];
+  let fromFile = false;
+
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     const eqIndex = arg.indexOf("=");
+
     if (arg.startsWith("--") && eqIndex > 0) {
       const flag = arg.slice(0, eqIndex);
       if (equalsFlags.has(flag)) {
-        return { sql: unquote(arg.slice(eqIndex + 1)), fromFile: false };
+        sql.push(unquote(arg.slice(eqIndex + 1)));
+        continue;
       }
     }
     if (equalsFlags.has(arg) && i + 1 < args.length) {
-      return { sql: unquote(args[i + 1]), fromFile: false };
+      sql.push(unquote(args[i + 1]));
+      i += 1;
+      continue;
     }
-    if (arg === "<" && i + 1 < args.length) {
-      return { sql: null, fromFile: true };
+    if (arg === "<") {
+      fromFile = true;
+      if (i + 1 < args.length) i += 1;
+      continue;
     }
     if (arg === "-f" || arg === "--file") {
-      return { sql: null, fromFile: true };
+      fromFile = true;
+      if (i + 1 < args.length) i += 1;
+      continue;
+    }
+    if (arg.startsWith("--file=")) {
+      fromFile = true;
     }
   }
 
-  if (client === "sqlite3") {
+  if (sql.length === 0 && client === "sqlite3") {
     const positional = args.filter((a) => !a.startsWith("-") && a !== "<");
     for (const candidate of positional) {
       const text = unquote(candidate);
       const keyword = firstKeyword(text);
       if (keyword !== null && SQL_KEYWORDS.has(keyword)) {
-        return { sql: text, fromFile: false };
+        sql.push(text);
+        break;
       }
     }
   }
-  return { sql: null, fromFile: false };
+
+  return { sql, fromFile, multiple: sql.length > 1 };
+}
+
+/** Classify every payload and return the most severe verdict. */
+function classifyAll(payloads: Payloads): SqlVerdict {
+  if (payloads.fromFile) {
+    return { verdict: "ask", reason: "SQL dari file tidak dapat diperiksa" };
+  }
+  if (payloads.sql.length === 0) {
+    return { verdict: "ask", reason: "query tidak dapat diparse" };
+  }
+
+  let worst: SqlVerdict | null = null;
+  for (const payload of payloads.sql) {
+    const result = classifyPayload(payload);
+    if (worst === null || SEVERITY[result.verdict] > SEVERITY[worst.verdict]) {
+      worst = result;
+    }
+  }
+
+  if (worst === null) {
+    return { verdict: "ask", reason: "query tidak dapat diparse" };
+  }
+
+  // Several payloads means the caller is chaining statements; never let that
+  // shape fall through as a plain allow even when every part reads as safe.
+  if (payloads.multiple && SEVERITY[worst.verdict] < SEVERITY.ask) {
+    return { verdict: "ask", reason: "beberapa payload SQL memerlukan persetujuan" };
+  }
+  return worst;
 }
 
 function heredocPayload(command: string): string | null {
@@ -208,13 +267,5 @@ export function classifySql(command: string): SqlVerdict | null {
   if (!found) return null;
 
   const args = tokens.slice(found.index + 1);
-  const { sql, fromFile } = payloadFromArgs(found.client, args);
-
-  if (fromFile) {
-    return { verdict: "ask", reason: "SQL dari file tidak dapat diperiksa" };
-  }
-  if (sql === null) {
-    return { verdict: "ask", reason: "query tidak dapat diparse" };
-  }
-  return classifyPayload(sql);
+  return classifyAll(payloadFromArgs(found.client, args));
 }

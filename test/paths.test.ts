@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   assertInSandbox,
   isInsideWorkspace,
   resolveLexical,
+  resolvePhysical,
 } from "../src/core/paths.ts";
 
 describe("isInsideWorkspace", () => {
@@ -76,5 +80,21 @@ describe("assertInSandbox", () => {
     expect(() => assertInSandbox("/ws-other/x", "/ws")).toThrow(
       /^GA_SANDBOX_VIOLATION:/,
     );
+  });
+});
+
+describe("resolvePhysical", () => {
+  test("REGRESSION: handles symlink cycles without infinite loop or hanging", () => {
+    const ws = mkdtempSync(join(tmpdir(), "ga-symlink-cycle-"));
+    symlinkSync("loop", join(ws, "loop"));
+
+    const start = Date.now();
+    const resolved = resolvePhysical(ws, "loop/child.txt");
+    const elapsed = Date.now() - start;
+
+    expect(elapsed).toBeLessThan(1000);
+    expect(resolved).toBeDefined();
+
+    rmSync(ws, { recursive: true, force: true });
   });
 });

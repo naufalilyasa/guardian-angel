@@ -7,14 +7,26 @@ export type ToolName =
   | "read"
   | "grep"
   | "find"
-  | "ls";
+  | "ls"
+  | "patch";
 
 export type ToolCall = {
   toolName: ToolName;
   input: Record<string, unknown>;
 };
 
-export type Scope = { workspace: string; sessionId: string; scopePath: string };
+/**
+ * An approval scope. `ruleId` is the identity of the rule that produced the
+ * `ask` verdict; without it a single approval would cover every `ask`-tier
+ * command in the workspace (approving `git push` would also allow `sudo`,
+ * recursive chmod, and docker prune).
+ */
+export type Scope = {
+  workspace: string;
+  sessionId: string;
+  scopePath: string;
+  ruleId: string;
+};
 
 export type PolicyRule = {
   match: { tool?: string; command?: string; path?: string };
@@ -30,6 +42,11 @@ export type GuardResult = {
   verdict: Tier;
   reason?: string;
   replacement?: { kind: "trash"; path: string };
+  /**
+   * Stable identity of the rule that produced this verdict. Used to scope
+   * approvals so that one approval cannot unlock a different rule's commands.
+   */
+  ruleId?: string;
 };
 
 export type ApprovalStore = {

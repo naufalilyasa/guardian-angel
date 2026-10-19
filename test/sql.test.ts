@@ -136,6 +136,42 @@ describe("statement classification", () => {
   });
 });
 
+describe("REGRESSION: every payload is classified, not just the first", () => {
+  test("psql with two -c flags blocks on the second DROP", () => {
+    expect(verdict('psql -c "SELECT 1" -c "DROP TABLE t"')).toBe("block");
+  });
+
+  test("mysql with two -e flags blocks on the second DROP", () => {
+    expect(verdict('mysql -e "SELECT 1" -e "DROP TABLE t"')).toBe("block");
+  });
+
+  test("mysql mixes -e and --execute=", () => {
+    expect(verdict('mysql -e "SELECT 1" --execute="ALTER TABLE t ADD c INT"')).toBe("block");
+  });
+
+  test("two benign payloads still ask rather than allow", () => {
+    const result = classifySql('mysql -e "SELECT 1" -e "SELECT 2"');
+    expect(result?.verdict).toBe("ask");
+    expect(result?.reason).toContain("beberapa payload");
+  });
+
+  test("a single payload is unaffected", () => {
+    expect(verdict('mysql -e "SELECT 1"')).toBe("allow");
+  });
+
+  test("a benign payload plus a file is still ask", () => {
+    expect(verdict('mysql -e "SELECT 1" -f dump.sql')).toBe("ask");
+  });
+
+  test("a benign payload plus a redirect is still ask", () => {
+    expect(verdict('mysql -e "SELECT 1" < dump.sql')).toBe("ask");
+  });
+
+  test("an allow verdict carries an accurate reason", () => {
+    expect(classifySql('mysql -e "SELECT 1"')?.reason).toBe("SELECT read-only");
+  });
+});
+
 describe("malformed input", () => {
   test("does not throw on an unterminated quote", () => {
     expect(() => classifySql('mysql -e "DROP TABLE t')).not.toThrow();

@@ -12,20 +12,28 @@ function workspace(): string {
   return mkdtempSync(join(tmpdir(), "ga-approvals-"));
 }
 
-const scope = (ws: string, path = "src/a.ts") => ({
+const scope = (ws: string, path = "src/a.ts", ruleId = "ask:sudo") => ({
   workspace: ws,
   sessionId: "session-1",
   scopePath: path,
+  ruleId,
 });
 
 describe("scopeKey", () => {
-  test("combines workspace, session, and scope path", () => {
-    expect(scopeKey(scope("/ws"))).toBe("/ws\u0000session-1\u0000src/a.ts");
+  test("combines workspace, session, scope path, and rule", () => {
+    expect(scopeKey(scope("/ws"))).toBe("/ws\u0000session-1\u0000src/a.ts\u0000ask:sudo");
   });
 
   test("differs when the scope path differs", () => {
     const ws = "/ws";
     expect(scopeKey(scope(ws, "a"))).not.toBe(scopeKey(scope(ws, "b")));
+  });
+
+  test("REGRESSION: differs when only the rule differs", () => {
+    const ws = "/ws";
+    expect(scopeKey(scope(ws, "a", "ask:sudo"))).not.toBe(
+      scopeKey(scope(ws, "a", "ask:git-push")),
+    );
   });
 });
 
@@ -58,7 +66,7 @@ describe("createApprovalStore", () => {
     store.grant(scope(ws), now);
 
     expect(
-      store.check({ workspace: ws, sessionId: "other", scopePath: "src/a.ts" }, now),
+      store.check({ workspace: ws, sessionId: "other", scopePath: "src/a.ts", ruleId: "ask:sudo" }, now),
     ).toBe(false);
   });
 

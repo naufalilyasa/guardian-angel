@@ -24,7 +24,7 @@ export type ApprovalStoreWithList = ApprovalStore & {
 };
 
 export function scopeKey(scope: Scope): string {
-  return `${scope.workspace}\0${scope.sessionId}\0${scope.scopePath}`;
+  return `${scope.workspace}\0${scope.sessionId}\0${scope.scopePath}\0${scope.ruleId}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

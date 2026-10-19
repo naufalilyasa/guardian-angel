@@ -6,15 +6,21 @@
   "bin": {
     "ga": "./src/cli/ga.ts"
   },
+  "exports": {
+    "./opencode-server": "./src/adapters/opencode/server.ts",
+    "./opencode-tui": "./src/adapters/opencode/tui.ts",
+    "./senpi": "./src/adapters/senpi.ts"
+  },
   "scripts": {
     "test": "bun test",
+    "test:smoke": "bun run scripts/test-opencode-smoke.ts",
     "typecheck": "tsc --noEmit",
     "ga": "bun run src/cli/ga.ts"
   },
   "devDependencies": {
     "@code-yeongyu/senpi": "2026.10.16",
+    "@opencode-ai/plugin": "1.18.2",
     "bun-types": "^1.4.3",
-    "typebox": "^1.4.2",
     "typescript": "^5.9.3"
   }
 }

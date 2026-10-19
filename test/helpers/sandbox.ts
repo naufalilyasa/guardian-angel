@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertInSandbox } from "../../src/core/paths.ts";
@@ -22,7 +22,7 @@ export function makeSandbox(prefix = "ga-test-"): Sandbox {
     workspace,
     outside,
     cleanup: () => {
-      const { rmSync } = require("node:fs") as typeof import("node:fs");
+  
       rmSync(root, { recursive: true, force: true });
     },
   };
