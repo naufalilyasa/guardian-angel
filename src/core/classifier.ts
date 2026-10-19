@@ -455,7 +455,7 @@ function classifyProtectedWrite(
   });
 
   for (const raw of extractUnquotedRedirects(command)) {
-    if (/\$\(|`|\$\{/.test(raw)) {
+    if (/[$`]/.test(raw)) {
       return {
         verdict: "block",
         reason: `pengalihan ke target dinamis (${raw}) berisiko merusak store dan diblokir`,
@@ -480,7 +480,7 @@ function classifyProtectedWrite(
       else if (token.startsWith("--output=")) token = token.slice(9);
       token = unquote(token).replace(/['"]/g, "");
       if (token.startsWith("-")) continue;
-      if (/\$\(|`|\$\{/.test(token)) {
+      if (/[$`]/.test(token)) {
         return {
           verdict: "block",
           reason: `argumen penulisan dinamis (${token}) berisiko merusak store dan diblokir`,
@@ -602,7 +602,7 @@ function checkTargetOverwrite(
   const clean = unquote(targetPath).replace(/['"]/g, "");
   if (!clean || isSink(clean)) return null;
 
-  if (/\$\(|`|\$\{/.test(clean)) {
+  if (/[$`]/.test(clean)) {
     return {
       verdict: "ask",
       reason: `menulis ke target dinamis: ${clean}`,
@@ -755,6 +755,19 @@ function classifyCommand(
   }
 
   const segments = splitSegments(command);
+
+  for (const segment of segments) {
+    const rawTokens = tokenize(segment);
+    const tokens = stripLaunchers(rawTokens);
+    if (tokens.length > 0 && /^\$[A-Za-z_]/.test(tokens[0])) {
+      return {
+        verdict: "ask",
+        reason: `eksekusi perintah melalui variabel (${tokens[0]}) memerlukan persetujuan`,
+        ruleId: "ask:variable-command",
+      };
+    }
+  }
+
   const { rmResult, rewriteable } = classifyRmSegments(segments, workspace);
   const effectiveRm = wrapper?.replacement ? wrapper : rmResult;
   const isRewriteable = wrapper?.replacement ? true : rewriteable;

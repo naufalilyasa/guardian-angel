@@ -799,4 +799,28 @@ describe("REGRESSION: overwrite detection and tool path normalization", () => {
     expect(res.verdict).toBe("allow");
     rmSync(ws, { recursive: true, force: true });
   });
+
+  test("REGRESSION: bare variable indirection cannot bypass store protection or rm rules", () => {
+    const ws = "/ws";
+    const res1 = classify({
+      call: { toolName: "bash", input: { command: "v=.guardian-angel/audit.jsonl; echo x > $v" } },
+      workspace: ws,
+    });
+    expect(res1.verdict).toBe("block");
+    expect(res1.ruleId).toBe("block:dynamic-redirect");
+
+    const res2 = classify({
+      call: { toolName: "bash", input: { command: "v=.guardian-angel/audit.jsonl; dd if=/dev/zero of=$v" } },
+      workspace: ws,
+    });
+    expect(res2.verdict).toBe("block");
+    expect(res2.ruleId).toBe("block:dynamic-write-verb");
+
+    const res3 = classify({
+      call: { toolName: "bash", input: { command: 'f="-rf"; a=rm; $a $f /' } },
+      workspace: ws,
+    });
+    expect(res3.verdict).toBe("ask");
+    expect(res3.ruleId).toBe("ask:variable-command");
+  });
 });
