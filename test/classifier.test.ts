@@ -938,6 +938,75 @@ describe("REGRESSION: overwrite detection and tool path normalization", () => {
     });
     expect(res3.verdict).toBe("ask");
     expect(res3.ruleId).toBe("ask:write-outside");
+
+    const res4 = classify({
+      call: { toolName: "bash", input: { command: "cd -- .guardian-angel && echo x > approvals.json" } },
+      workspace: ws,
+    });
+    expect(res4.verdict).toBe("block");
+    expect(res4.ruleId).toBe("block:cd-protected");
+
+    const res5 = classify({
+      call: { toolName: "bash", input: { command: "pushd .guardian-angel && echo x > approvals.json" } },
+      workspace: ws,
+    });
+    expect(res5.verdict).toBe("block");
+    expect(res5.ruleId).toBe("block:cd-protected");
+  });
+
+  test("REGRESSION: backslash-escaped store paths are normalized and blocked", () => {
+    const ws = "/ws";
+    const res1 = classify({
+      call: { toolName: "bash", input: { command: "echo hi > \\.guardian-angel/audit.jsonl" } },
+      workspace: ws,
+    });
+    expect(res1.verdict).toBe("block");
+    expect(res1.ruleId).toBe("block:protected-bash-write");
+
+    const res2 = classify({
+      call: { toolName: "bash", input: { command: "echo x >> \\.guardian-angel/audit.jsonl" } },
+      workspace: ws,
+    });
+    expect(res2.verdict).toBe("block");
+    expect(res2.ruleId).toBe("block:protected-bash-write");
+
+    const res3 = classify({
+      call: { toolName: "bash", input: { command: "echo hi > .guardian\\-angel/audit.jsonl" } },
+      workspace: ws,
+    });
+    expect(res3.verdict).toBe("block");
+    expect(res3.ruleId).toBe("block:protected-bash-write");
+
+    const res4 = classify({
+      call: { toolName: "bash", input: { command: "echo hi > \\.\"guardian-angel\"/audit.jsonl" } },
+      workspace: ws,
+    });
+    expect(res4.verdict).toBe("block");
+    expect(res4.ruleId).toBe("block:protected-bash-write");
+  });
+
+  test("REGRESSION: ANSI-C quoting with plain text names is normalized", () => {
+    const ws = "/ws";
+    const res1 = classify({
+      call: { toolName: "bash", input: { command: "$'rm' -rf /etc/important" } },
+      workspace: ws,
+    });
+    expect(res1.verdict).toBe("block");
+    expect(res1.ruleId).toBe("block:rm-outside");
+
+    const res2 = classify({
+      call: { toolName: "bash", input: { command: "$'rm' -rf ~" } },
+      workspace: ws,
+    });
+    expect(res2.verdict).toBe("block");
+    expect(res2.ruleId).toBe("block:rm-home");
+
+    const res3 = classify({
+      call: { toolName: "bash", input: { command: "$'d''d' of=.guardian-angel/audit.jsonl" } },
+      workspace: ws,
+    });
+    expect(res3.verdict).toBe("block");
+    expect(res3.ruleId).toBe("block:protected-bash-write");
   });
 
   test("REGRESSION: tilde expansion on write targets is contained", () => {

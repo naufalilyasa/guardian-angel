@@ -61,7 +61,7 @@ const SUBSTITUTION = /(?:[\$<>]\(([^()]*(?:\([^()]*\)[^()]*)*)\)|`([^`]*)`)/g;
 
 /** Strip quotes and backslashes from command words and tokens. */
 export function stripQuotes(token: string): string {
-  return token.replace(/['"\\]/g, "");
+  return token.replace(/^\$['"]/, "").replace(/['"\\]/g, "");
 }
 
 /**
@@ -291,12 +291,14 @@ function checkDelegatedRm(rawTokens: string[], program: string): GuardResult | n
 
 function parseRmOperands(tokens: string[]): { operands: string[]; error?: GuardResult } {
   const operands: string[] = [];
+  let endOfOptions = false;
   for (const rawToken of tokens.slice(1)) {
     const token = stripQuotes(rawToken);
-    if (token === "--") {
+    if (!endOfOptions && token === "--") {
+      endOfOptions = true;
       continue;
     }
-    if (token.startsWith("-")) {
+    if (!endOfOptions && token.startsWith("-")) {
       if (!RM_ALLOWED_FLAGS.has(token)) {
         return {
           operands: [],
@@ -528,7 +530,7 @@ function classifyProtectedWrite(
           ruleId: "block:dynamic-redirect",
         };
       }
-      const clean = unquote(raw).replace(/['"]/g, "");
+      const clean = unquote(raw).replace(/['"\\]/g, "");
       const target = resolveLexical(cwd, clean);
       if (isProtectedPath(workspace, target) || isProtectedPath(workspace, resolvePhysical(workspace, target))) {
         return blocked(target);
@@ -543,7 +545,7 @@ function classifyProtectedWrite(
       let token = rawToken;
       if (token.startsWith("of=")) token = token.slice(3);
       else if (token.startsWith("--output=")) token = token.slice(9);
-      token = unquote(token).replace(/['"]/g, "");
+      token = unquote(token).replace(/['"\\]/g, "");
       if (token.startsWith("-")) continue;
       if (/[$`<>()]/.test(token)) {
         return {
@@ -651,7 +653,7 @@ function extractCpMvTargets(args: string[]): { targets: string[]; srcPaths?: str
 function extractVerbTargets(verb: string, args: string[]): { targets: string[]; srcPaths?: string[] } {
   if (verb === "dd") {
     const ofToken = args.find((t) => t.startsWith("of="));
-    return { targets: ofToken ? [unquote(ofToken.slice(3)).replace(/['"]/g, "")] : [] };
+    return { targets: ofToken ? [unquote(ofToken.slice(3)).replace(/['"\\]/g, "")] : [] };
   }
   if (verb === "sed") return { targets: extractSedTargets(args) };
   if (verb === "truncate") return { targets: extractTruncateTargets(args) };
@@ -667,7 +669,7 @@ function checkTargetOverwrite(
   cwd: string = workspace,
 ): GuardResult | null {
   if (!targetPath) return null;
-  const clean = unquote(targetPath).replace(/['"]/g, "");
+  const clean = unquote(targetPath).replace(/['"\\]/g, "");
   if (!clean || isSink(clean)) return null;
 
   if (/[$`<>()]/.test(clean)) {
@@ -840,8 +842,16 @@ function trackEffectiveCwd(
     if (stripped.length === 0) continue;
 
     const prog = stripQuotes(basenameOf(stripped[0]));
-    if (prog === "cd") {
-      const rawTarget = stripped[1] ?? "~";
+    if (prog === "cd" || prog === "pushd") {
+      let targetIdx = 1;
+      while (targetIdx < stripped.length && stripped[targetIdx].startsWith("-")) {
+        if (stripQuotes(stripped[targetIdx]) === "--") {
+          targetIdx += 1;
+          break;
+        }
+        targetIdx += 1;
+      }
+      const rawTarget = stripped[targetIdx] ?? "~";
       const cleanTarget = stripQuotes(rawTarget);
       if (/[$`<>()]/.test(cleanTarget)) {
         return {
