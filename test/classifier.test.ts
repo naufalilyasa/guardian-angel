@@ -1036,4 +1036,62 @@ describe("REGRESSION: overwrite detection and tool path normalization", () => {
     expect(res.verdict).toBe("ask");
     expect(res.ruleId).toBe("ask:launcher-depth");
   });
+
+  test("REGRESSION: command substitutions, IFS splicing, herestrings, and git clean are intercepted", () => {
+    const ws = "/ws";
+    const r1 = classify({
+      call: { toolName: "bash", input: { command: 'sh -c "$(printf \'rm -rf ~\')"' } },
+      workspace: ws,
+    });
+    expect(r1.verdict).toBe("ask");
+    expect(r1.ruleId).toBe("ask:variable-command");
+
+    const r2 = classify({
+      call: { toolName: "bash", input: { command: "$(printf 'rm -rf .guardian-angel')" } },
+      workspace: ws,
+    });
+    expect(r2.verdict).toBe("ask");
+    expect(r2.ruleId).toBe("ask:variable-command");
+
+    const r3 = classify({
+      call: { toolName: "bash", input: { command: "rm${IFS}-rf${IFS}/" } },
+      workspace: ws,
+    });
+    expect(r3.verdict).toBe("block");
+    expect(r3.ruleId).toBe("block:rm-root");
+
+    const r4 = classify({
+      call: { toolName: "bash", input: { command: 'bash <<< "rm -rf /"' } },
+      workspace: ws,
+    });
+    expect(r4.verdict).toBe("block");
+    expect(r4.ruleId).toBe("block:rm-root");
+
+    const r5 = classify({
+      call: { toolName: "bash", input: { command: "git clean -fdx" } },
+      workspace: ws,
+    });
+    expect(r5.verdict).toBe("block");
+    expect(r5.ruleId).toBe("block:git-clean-ignored");
+
+    const r6 = classify({
+      call: { toolName: "bash", input: { command: "git clean -fd" } },
+      workspace: ws,
+    });
+    expect(r6.verdict).toBe("ask");
+    expect(r6.ruleId).toBe("ask:git-clean");
+
+    const r7 = classify({
+      call: { toolName: "bash", input: { command: "(echo x > newfile.txt)" } },
+      workspace: ws,
+    });
+    expect(r7.verdict).toBe("allow");
+
+    const r8 = classify({
+      call: { toolName: "bash", input: { command: 'bash -c "sudo x" && rm -rf ~' } },
+      workspace: ws,
+    });
+    expect(r8.verdict).toBe("block");
+    expect(r8.ruleId).toBe("block:rm-home");
+  });
 });

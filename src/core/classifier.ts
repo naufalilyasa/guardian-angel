@@ -22,6 +22,8 @@ const BLOCK_PATTERNS: Array<{ id: string; re: RegExp; reason: string }> = [
   { id: "block:rm-root", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?rm\s+(-[a-zA-Z]*[rR][a-zA-Z]*\s+)*-[a-zA-Z]*f[a-zA-Z]*\s+\/([\s;)|]|$)/, reason: "rm -rf pada root filesystem diblokir" },
   { id: "block:rm-home", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?rm\s+(-[a-zA-Z]+\s+)*~([\s;)|]|$)/, reason: "rm pada home directory diblokir" },
   { id: "block:rm-home-env", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?rm\s+(-[a-zA-Z]+\s+)*\$HOME([\s;)|]|$)/, reason: "rm pada $HOME diblokir" },
+  { id: "block:protected-rm", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?(rm|unlink|shred)\b[^\n]*\.(guardian-angel|git)\b/, reason: "penghapusan direktori proteksi (.guardian-angel atau .git) diblokir" },
+  { id: "block:git-clean-ignored", re: /(^|[\s;|&(])git\s+clean\b[^\n]*\s-[^\n]*[xX]/, reason: "git clean dengan flag -x/-X menghapus ignored files termasuk store dan diblokir" },
   { id: "block:mkfs", re: /(^|[\s;|&(])mkfs(\.[a-z0-9]+)?([\s;)|]|$)/, reason: "mkfs memformat filesystem dan diblokir" },
   { id: "block:dd-device", re: /\bdd\b[^\n]*\bof=\/dev\//, reason: "dd menulis langsung ke block device dan diblokir" },
   { id: "block:fork-bomb", re: /:\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:/, reason: "fork bomb diblokir" },
@@ -33,6 +35,7 @@ const BLOCK_PATTERNS: Array<{ id: string; re: RegExp; reason: string }> = [
 const ASK_PATTERNS: Array<{ id: string; re: RegExp; reason: string }> = [
   { id: "ask:sudo", re: /(^|[\s;|&(])sudo([\s;)|]|$)/, reason: "sudo memerlukan persetujuan" },
   { id: "ask:git-push", re: /(^|[\s;|&(])git\s+push\b/, reason: "git push memerlukan persetujuan" },
+  { id: "ask:git-clean", re: /(^|[\s;|&(])git\s+clean\b/, reason: "git clean menghapus file yang tidak terlacak dan memerlukan persetujuan" },
   { id: "ask:chmod-recursive", re: /(^|[\s;|&(])ch(mod|own)\s+-R\b/, reason: "perubahan permission rekursif memerlukan persetujuan" },
   { id: "ask:kill-all", re: /(^|[\s;|&(])kill\s+-9\s+-1([\s;)|]|$)/, reason: "membunuh semua proses memerlukan persetujuan" },
   { id: "ask:docker-prune", re: /(^|[\s;|&(])docker\s+system\s+prune\b/, reason: "docker system prune memerlukan persetujuan" },
@@ -143,8 +146,16 @@ function unwrapAll(segment: string): string[] {
         if (flagIndex !== -1 && head.length > flagIndex + 1) {
           inners.push(unquote(head.slice(flagIndex + 1).join(" ")));
         }
+        const hereIndex = head.findIndex((token) => token.startsWith("<<<"));
+        if (hereIndex !== -1) {
+          const raw = head[hereIndex] === "<<<" ? head.slice(hereIndex + 1).join(" ") : head[hereIndex].slice(3);
+          if (raw.trim()) inners.push(unquote(raw.trim()));
+        }
       } else if (program === "eval" && head.length > 1) {
-        inners.push(unquote(head.slice(1).join(" ")));
+        const raw = unquote(head.slice(1).join(" ")).trim();
+        if (!/^\$\(|^`/.test(raw)) {
+          inners.push(raw);
+        }
       }
     }
   }
@@ -456,7 +467,7 @@ function readTargetToken(command: string, start: number): { target: string; end:
     } else if (tch === ")" && parenDepth > 0) {
       parenDepth -= 1;
       target += tch;
-    } else if (parenDepth === 0 && !inBacktick && /[\s;&|<>]/.test(tch)) {
+    } else if (parenDepth === 0 && !inBacktick && /[\s;&|<>)]/.test(tch)) {
       break;
     } else {
       target += tch;
@@ -893,19 +904,27 @@ function classifyCommand(
   workspace: string,
   depth: number,
 ): GuardResult {
-  const segments = splitSegments(command);
+  if (depth >= MAX_UNWRAP_DEPTH) {
+    return {
+      verdict: "ask",
+      reason: "eksekusi shell bertingkat melebihi batas unwrap",
+      ruleId: "ask:wrapper-depth",
+    };
+  }
+  const normalized = command.replace(/\$\{IFS\}|\$IFS\b/g, " ");
+  const segments = splitSegments(normalized);
   const { cwdMap, error: cwdError } = trackEffectiveCwd(segments, workspace);
   if (cwdError) return cwdError;
 
-  const protectedWrite = classifyProtectedWrite(command, workspace, cwdMap);
+  const protectedWrite = classifyProtectedWrite(normalized, workspace, cwdMap);
   if (protectedWrite) return protectedWrite;
 
-  const wrapper = classifyUnwrapped(command, workspace, depth);
-  if (wrapper && wrapper.verdict !== "allow") return wrapper;
-
   for (const { id, re, reason } of BLOCK_PATTERNS) {
-    if (re.test(command)) return { verdict: "block", reason, ruleId: id };
+    if (re.test(normalized)) return { verdict: "block", reason, ruleId: id };
   }
+
+  const wrapper = classifyUnwrapped(normalized, workspace, depth);
+  if (wrapper && wrapper.verdict === "block") return wrapper;
 
   for (const segment of segments) {
     const rawTokens = tokenize(segment);
@@ -921,10 +940,10 @@ function classifyCommand(
       const head = tokens[0];
       if (!head.startsWith("$'") && !head.startsWith('$"')) {
         const cleanHead = stripQuotes(head);
-        if (/^\$([A-Za-z_0-9@*#?]|{[^}]+})/.test(cleanHead)) {
+        if (/^\$([A-Za-z_0-9@*#?]|{[^}]+}|\()|^`/.test(cleanHead)) {
           return {
             verdict: "ask",
-            reason: `eksekusi perintah melalui variabel (${tokens[0]}) memerlukan persetujuan`,
+            reason: `eksekusi perintah melalui variabel atau substitusi (${tokens[0]}) memerlukan persetujuan`,
             ruleId: "ask:variable-command",
           };
         }
@@ -945,10 +964,13 @@ function classifyCommand(
         }
       : null;
 
-  const effective = blockedRewrite ?? effectiveRm;
+  let effective: GuardResult | null = blockedRewrite ?? effectiveRm;
+  if (wrapper && wrapper.verdict === "ask") {
+    effective = effective ? stricter(effective, wrapper) : wrapper;
+  }
 
   for (const { id, re, reason } of ASK_PATTERNS) {
-    if (re.test(command)) {
+    if (re.test(normalized)) {
       if (!effective) return { verdict: "ask", reason, ruleId: id };
       const merged = stricter(effective, { verdict: "ask", reason, ruleId: id });
       if (merged.verdict === "ask" && effective.replacement && isRewriteable) {
@@ -958,7 +980,7 @@ function classifyCommand(
     }
   }
 
-  const overwrite = classifyOverwrite(command, workspace, cwdMap);
+  const overwrite = classifyOverwrite(normalized, workspace, cwdMap);
   if (overwrite) return effective ? stricter(effective, overwrite) : overwrite;
 
   return effective ?? { verdict: "allow", reason: "default allow", ruleId: "allow:default" };

@@ -252,6 +252,20 @@ describe("policy integration", () => {
     expect(result.reason).toBe("user override");
   });
 
+  test("REGRESSION: a global allow CANNOT override a protected store block", async () => {
+    const { deps } = harness();
+    deps.policy = {
+      rules: [
+        { match: { tool: "bash", command: "rm -rf *" }, tier: "allow", reason: "user override", source: "global" },
+      ],
+    };
+
+    const result = await guard(bash("rm -rf .guardian-angel"), deps);
+
+    expect(result.verdict).toBe("block");
+    expect(result.ruleId).toBe("block:protected-bash-write");
+  });
+
   test("a project rule cannot lower the builtin block end-to-end", async () => {
     const { deps } = harness();
     deps.policy = {

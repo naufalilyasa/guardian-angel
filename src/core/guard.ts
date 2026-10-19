@@ -85,9 +85,16 @@ function applyBashPolicy(
   let ruleId = base.ruleId;
 
   if (policyMatch?.source === "global") {
-    verdict = policyMatch.tier;
-    reason = policyMatch.reason ?? `policy tier ${policyMatch.tier} (global)`;
-    ruleId = policyRuleId(policyMatch);
+    // Global policy may override builtin blocks (e.g. rm -rf /*), but never protected store blocks
+    if (base.ruleId?.startsWith("block:protected") || base.ruleId === "block:cd-protected") {
+      verdict = base.verdict;
+      reason = base.reason;
+      ruleId = base.ruleId;
+    } else {
+      verdict = policyMatch.tier;
+      reason = policyMatch.reason ?? `policy tier ${policyMatch.tier} (global)`;
+      ruleId = policyRuleId(policyMatch);
+    }
   } else {
     if (policyMatch && SEVERITY[policyMatch.tier] > SEVERITY[verdict]) {
       verdict = policyMatch.tier;

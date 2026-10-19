@@ -137,7 +137,7 @@ export function mergePolicy(layers: PolicyLayer[]): LoadedPolicy {
         warnings.push(
           `project cannot lower block: ${rule.reason ?? rule.match.command ?? "rule"}`,
         );
-        rules.push({ ...rule, tier: "block" });
+        // ponytail: drop weakening project rule with warning; do not invert to block-all
         continue;
       }
       rules.push(layer.source === "global" ? { ...rule, source: "global" } : rule);

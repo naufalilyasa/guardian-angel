@@ -179,7 +179,7 @@ describe("mergePolicy", () => {
     expect(matchRule(merged.rules, { tool: "bash", command: "git push origin" })?.tier).toBe("block");
   });
 
-  test("REGRESSION: a broad project rule cannot bypass a builtin block", () => {
+  test("REGRESSION: a broad project rule cannot bypass a builtin block and does not block benign commands", () => {
     const layers: PolicyLayer[] = [
       { source: "builtin", config: { rules: BUILTIN_RULES } },
       {
@@ -189,6 +189,7 @@ describe("mergePolicy", () => {
     ];
     const merged = mergePolicy(layers);
     expect(matchRule(merged.rules, { tool: "bash", command: "rm -rf /" })?.tier).toBe("block");
+    expect(matchRule(merged.rules, { tool: "bash", command: "ls -la" })?.tier).not.toBe("block");
     expect(merged.warnings.join(" ")).toContain("project cannot lower block");
   });
 
