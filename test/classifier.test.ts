@@ -823,4 +823,34 @@ describe("REGRESSION: overwrite detection and tool path normalization", () => {
     expect(res3.verdict).toBe("ask");
     expect(res3.ruleId).toBe("ask:variable-command");
   });
+
+  test("REGRESSION: process substitution and paren groups with trailing tokens are intercepted", () => {
+    const ws = "/ws";
+    const p1 = classify({
+      call: { toolName: "bash", input: { command: "cat <(rm -rf /outside)" } },
+      workspace: ws,
+    });
+    expect(p1.verdict).toBe("block");
+
+    const p2 = classify({
+      call: { toolName: "bash", input: { command: "(rm file.txt) 2>/dev/null" } },
+      workspace: ws,
+    });
+    expect(p2.verdict).toBe("block");
+    expect(p2.ruleId).toBe("block:rm-wrapper");
+
+    const p3 = classify({
+      call: { toolName: "bash", input: { command: "find . -exec sh -c 'rm -rf /' \\;" } },
+      workspace: ws,
+    });
+    expect(p3.verdict).toBe("ask");
+    expect(p3.ruleId).toBe("ask:find-exec-shell");
+
+    const p4 = classify({
+      call: { toolName: "bash", input: { command: "echo hi > >(tee .guardian-angel/audit.jsonl)" } },
+      workspace: ws,
+    });
+    expect(p4.verdict).toBe("block");
+    expect(p4.ruleId).toBe("block:dynamic-redirect");
+  });
 });

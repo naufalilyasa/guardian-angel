@@ -56,7 +56,7 @@ const LAUNCHERS = new Set([
 ]);
 
 /** Command substitution: `$(...)` and backticks (global match). */
-const SUBSTITUTION = /\$\(([^()]*(?:\([^()]*\)[^()]*)*)\)|`([^`]*)`/g;
+const SUBSTITUTION = /(?:[\$<>]\(([^()]*(?:\([^()]*\)[^()]*)*)\)|`([^`]*)`)/g;
 
 /**
  * Strip a leading launcher and its flags so the real command becomes visible.
@@ -109,9 +109,10 @@ function unwrapAll(segment: string): string[] {
   const inners: string[] = [];
   const trimmed = segment.trim();
 
-  if (trimmed.startsWith("(") && trimmed.endsWith(")")) {
-    const inner = trimmed.slice(1, -1).trim();
-    if (inner.length > 0) inners.push(inner);
+  // Match parenthesized subshell anywhere in the segment (e.g. `(rm x) 2>/dev/null`, `time (rm x)`)
+  const parenMatch = trimmed.match(/(?:^|[\s;&|])\(([^()]+)\)/);
+  if (parenMatch && parenMatch[1].trim()) {
+    inners.push(parenMatch[1].trim());
   }
 
   const tokens = tokenize(segment);
@@ -245,6 +246,13 @@ function checkDelegatedRm(rawTokens: string[], program: string): GuardResult | n
         verdict: "block",
         reason: "find -exec rm tidak dapat di-undo otomatis; jalankan ga trash <path> per target",
         ruleId: "block:rm-find-exec",
+      };
+    }
+    if (SHELLS.has(verb)) {
+      return {
+        verdict: "ask",
+        reason: "find -exec menjalankan shell memerlukan persetujuan",
+        ruleId: "ask:find-exec-shell",
       };
     }
   }
@@ -455,7 +463,7 @@ function classifyProtectedWrite(
   });
 
   for (const raw of extractUnquotedRedirects(command)) {
-    if (/[$`]/.test(raw)) {
+    if (/[$`<>()]/.test(raw)) {
       return {
         verdict: "block",
         reason: `pengalihan ke target dinamis (${raw}) berisiko merusak store dan diblokir`,
@@ -480,7 +488,7 @@ function classifyProtectedWrite(
       else if (token.startsWith("--output=")) token = token.slice(9);
       token = unquote(token).replace(/['"]/g, "");
       if (token.startsWith("-")) continue;
-      if (/[$`]/.test(token)) {
+      if (/[$`<>()]/.test(token)) {
         return {
           verdict: "block",
           reason: `argumen penulisan dinamis (${token}) berisiko merusak store dan diblokir`,
@@ -602,7 +610,7 @@ function checkTargetOverwrite(
   const clean = unquote(targetPath).replace(/['"]/g, "");
   if (!clean || isSink(clean)) return null;
 
-  if (/[$`]/.test(clean)) {
+  if (/[$`<>()]/.test(clean)) {
     return {
       verdict: "ask",
       reason: `menulis ke target dinamis: ${clean}`,
