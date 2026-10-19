@@ -18,9 +18,9 @@ export type ClassifierInput = {
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 
 const BLOCK_PATTERNS: Array<{ id: string; re: RegExp; reason: string }> = [
-  { id: "block:rm-root", re: /(^|[\s;|&(])rm\s+(-[a-zA-Z]*[rR][a-zA-Z]*\s+)*-[a-zA-Z]*f[a-zA-Z]*\s+\/([\s;)|]|$)/, reason: "rm -rf pada root filesystem diblokir" },
-  { id: "block:rm-home", re: /(^|[\s;|&(])rm\s+(-[a-zA-Z]+\s+)*~([\s;)|]|$)/, reason: "rm pada home directory diblokir" },
-  { id: "block:rm-home-env", re: /(^|[\s;|&(])rm\s+(-[a-zA-Z]+\s+)*\$HOME([\s;)|]|$)/, reason: "rm pada $HOME diblokir" },
+  { id: "block:rm-root", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?rm\s+(-[a-zA-Z]*[rR][a-zA-Z]*\s+)*-[a-zA-Z]*f[a-zA-Z]*\s+\/([\s;)|]|$)/, reason: "rm -rf pada root filesystem diblokir" },
+  { id: "block:rm-home", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?rm\s+(-[a-zA-Z]+\s+)*~([\s;)|]|$)/, reason: "rm pada home directory diblokir" },
+  { id: "block:rm-home-env", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?rm\s+(-[a-zA-Z]+\s+)*\$HOME([\s;)|]|$)/, reason: "rm pada $HOME diblokir" },
   { id: "block:mkfs", re: /(^|[\s;|&(])mkfs(\.[a-z0-9]+)?([\s;)|]|$)/, reason: "mkfs memformat filesystem dan diblokir" },
   { id: "block:dd-device", re: /\bdd\b[^\n]*\bof=\/dev\//, reason: "dd menulis langsung ke block device dan diblokir" },
   { id: "block:fork-bomb", re: /:\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:/, reason: "fork bomb diblokir" },
@@ -150,36 +150,32 @@ export function splitSegments(command: string): string[] {
 
   for (let i = 0; i < command.length; i += 1) {
     const ch = command[i];
-
-    if (escaped) {
-      current += ch;
-      escaped = false;
-      continue;
-    }
-    if (ch === "\\" && quote !== "'") {
-      current += ch;
-      escaped = true;
-      continue;
-    }
+    if (escaped) { current += ch; escaped = false; continue; }
+    if (ch === "\\" && quote !== "'") { current += ch; escaped = true; continue; }
     if (quote) {
       current += ch;
       if (ch === quote) quote = null;
       continue;
     }
-    if (ch === '"' || ch === "'") {
-      current += ch;
-      quote = ch;
-      continue;
-    }
+    if (ch === '"' || ch === "'") { current += ch; quote = ch; continue; }
     if (ch === "|" || ch === ";" || ch === "\n") {
       segments.push(current);
       current = "";
       continue;
     }
-    if (ch === "&" && command[i + 1] === "&") {
+    if (ch === "&") {
+      if (command[i + 1] === "&") {
+        segments.push(current);
+        current = "";
+        i += 1;
+        continue;
+      }
+      if (command[i + 1] === ">" || (i > 0 && command[i - 1] === ">")) {
+        current += ch;
+        continue;
+      }
       segments.push(current);
       current = "";
-      i += 1;
       continue;
     }
     current += ch;
@@ -333,7 +329,8 @@ function classifyRm(segment: string, workspace: string): GuardResult | null {
   if (delegated) return delegated;
 
   const tokens = stripLaunchers(rawTokens);
-  if (tokens[0] !== "rm") return null;
+  const progName = tokens[0]?.split("/").pop() ?? tokens[0];
+  if (progName !== "rm") return null;
 
   const { operands, error } = parseRmOperands(tokens);
   if (error) return error;
@@ -376,17 +373,27 @@ function readTargetToken(command: string, start: number): { target: string; end:
 
   let target = "";
   let tQuote: '"' | "'" | null = null;
+  let parenDepth = 0;
+  let inBacktick = false;
+
   while (j < command.length) {
     const tch = command[j];
     if (tQuote !== null) {
-      if (tch === tQuote) {
-        tQuote = null;
-      } else {
-        target += tch;
-      }
+      if (tch === tQuote) tQuote = null;
+      target += tch;
     } else if (tch === '"' || tch === "'") {
       tQuote = tch;
-    } else if (/[\s;&|<>]/.test(tch)) {
+      target += tch;
+    } else if (tch === "`") {
+      inBacktick = !inBacktick;
+      target += tch;
+    } else if (tch === "(" && target.endsWith("$")) {
+      parenDepth += 1;
+      target += tch;
+    } else if (tch === ")" && parenDepth > 0) {
+      parenDepth -= 1;
+      target += tch;
+    } else if (parenDepth === 0 && !inBacktick && /[\s;&|<>]/.test(tch)) {
       break;
     } else {
       target += tch;
@@ -448,7 +455,15 @@ function classifyProtectedWrite(
   });
 
   for (const raw of extractUnquotedRedirects(command)) {
-    const target = resolveLexical(workspace, unquote(raw));
+    if (/\$\(|`|\$\{/.test(raw)) {
+      return {
+        verdict: "block",
+        reason: `pengalihan ke target dinamis (${raw}) berisiko merusak store dan diblokir`,
+        ruleId: "block:dynamic-redirect",
+      };
+    }
+    const clean = unquote(raw).replace(/['"]/g, "");
+    const target = resolveLexical(workspace, clean);
     if (isProtectedPath(workspace, target) || isProtectedPath(workspace, resolvePhysical(workspace, target))) {
       return blocked(target);
     }
@@ -463,7 +478,15 @@ function classifyProtectedWrite(
       let token = rawToken;
       if (token.startsWith("of=")) token = token.slice(3);
       else if (token.startsWith("--output=")) token = token.slice(9);
+      token = unquote(token).replace(/['"]/g, "");
       if (token.startsWith("-")) continue;
+      if (/\$\(|`|\$\{/.test(token)) {
+        return {
+          verdict: "block",
+          reason: `argumen penulisan dinamis (${token}) berisiko merusak store dan diblokir`,
+          ruleId: "block:dynamic-write-verb",
+        };
+      }
       const target = resolveLexical(workspace, token);
       if (isProtectedPath(workspace, target) || isProtectedPath(workspace, resolvePhysical(workspace, target))) {
         return blocked(target);
@@ -488,7 +511,7 @@ const SYSTEM_SINKS = new Set([
 ]);
 
 function isSink(target: string): boolean {
-  return SYSTEM_SINKS.has(target) || /^&[0-9]+$/.test(target);
+  return SYSTEM_SINKS.has(target) || /^&?[0-9]+$/.test(target);
 }
 
 const WRITE_OVERWRITE_VERBS = new Set([
@@ -561,7 +584,7 @@ function extractCpMvTargets(args: string[]): { targets: string[]; srcPath?: stri
 function extractVerbTargets(verb: string, args: string[]): { targets: string[]; srcPath?: string } {
   if (verb === "dd") {
     const ofToken = args.find((t) => t.startsWith("of="));
-    return { targets: ofToken ? [ofToken.slice(3)] : [] };
+    return { targets: ofToken ? [unquote(ofToken.slice(3)).replace(/['"]/g, "")] : [] };
   }
   if (verb === "sed") return { targets: extractSedTargets(args) };
   if (verb === "truncate") return { targets: extractTruncateTargets(args) };
@@ -576,8 +599,16 @@ function checkTargetOverwrite(
   srcPath?: string,
 ): GuardResult | null {
   if (!targetPath) return null;
-  const clean = unquote(targetPath);
+  const clean = unquote(targetPath).replace(/['"]/g, "");
   if (!clean || isSink(clean)) return null;
+
+  if (/\$\(|`|\$\{/.test(clean)) {
+    return {
+      verdict: "ask",
+      reason: `menulis ke target dinamis: ${clean}`,
+      ruleId: "ask:dynamic-write",
+    };
+  }
 
   const target = resolveLexical(workspace, clean);
 
@@ -659,7 +690,13 @@ function classifyUnwrapped(
   workspace: string,
   depth: number,
 ): GuardResult | null {
-  if (depth >= MAX_UNWRAP_DEPTH) return null;
+  if (depth >= MAX_UNWRAP_DEPTH) {
+    return {
+      verdict: "ask",
+      reason: "eksekusi shell bertingkat melebihi batas unwrap",
+      ruleId: "ask:wrapper-depth",
+    };
+  }
   const segments = splitSegments(command);
   for (const segment of segments) {
     for (const inner of unwrapAll(segment)) {

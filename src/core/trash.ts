@@ -189,6 +189,9 @@ export function restore(workspace: string, id: string): string {
   if (!isInsideWorkspace(workspace, entry.originalPath)) {
     throw new Error(`GA_TRASH_REFUSED: outside workspace: ${entry.originalPath}`);
   }
+  if (isProtectedPath(workspace, entry.originalPath)) {
+    throw new Error(`GA_TRASH_REFUSED: ${protectedReason(entry.originalPath)}`);
+  }
   assertNoSymlinkComponents(workspace, entry.originalPath);
 
   const dir = entryDir(workspace, id);

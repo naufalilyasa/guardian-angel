@@ -41,12 +41,10 @@ export function resolvePhysical(workspace: string, input: string): string {
   const tail: string[] = [];
   const seen = new Set<string>();
   let hops = 0;
-  const MAX_HOPS = 40;
 
-  while (hops < MAX_HOPS) {
+  while (hops++ < 40) {
     if (seen.has(current)) break;
     seen.add(current);
-    hops += 1;
 
     let isSymlink = false;
     let exists = false;
@@ -54,28 +52,21 @@ export function resolvePhysical(workspace: string, input: string): string {
       const st = lstatSync(current);
       exists = true;
       isSymlink = st.isSymbolicLink();
-    } catch {
-      // Path component does not exist on disk
-    }
+    } catch {}
 
     if (isSymlink) {
       try {
-        const rawTarget = readlinkSync(current);
-        const linkTarget = resolve(dirname(current), rawTarget);
+        const linkTarget = resolve(dirname(current), readlinkSync(current));
         current = tail.length > 0 ? resolve(linkTarget, ...tail) : linkTarget;
         tail.length = 0;
         continue;
-      } catch {
-        // Fall through to realpath or parent traversal if readlink fails
-      }
+      } catch {}
     }
 
     if (exists) {
       try {
         current = realpathSync(current);
-      } catch {
-        // Keep current if realpath fails
-      }
+      } catch {}
       break;
     }
 

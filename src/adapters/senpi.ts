@@ -66,6 +66,17 @@ function resolvePolicy(loadPolicy: typeof loadPolicyFromFiles, workspace: string
   }
 }
 
+function initSenpiWorkspace(workspace: string): void {
+  if (preparedWorkspaces.has(workspace)) return;
+  try {
+    ensureStore(workspace);
+    preparedWorkspaces.add(workspace);
+  } catch {
+    // A store we cannot prepare must not break the tool call; the audit
+    // sink still fails loudly on its own if the store is unusable.
+  }
+}
+
 export function createHandler(deps: AdapterDeps) {
   const guardFn = deps.guardFn ?? guard;
   const loadPolicy = deps.loadPolicy ?? loadPolicyFromFiles;
@@ -80,16 +91,7 @@ export function createHandler(deps: AdapterDeps) {
     const workspace = ctx.cwd;
     const sessionId = resolveSessionId(ctx);
     const policy = resolvePolicy(loadPolicy, workspace);
-
-    if (!preparedWorkspaces.has(workspace)) {
-      try {
-        ensureStore(workspace);
-        preparedWorkspaces.add(workspace);
-      } catch {
-        // A store we cannot prepare must not break the tool call; the audit
-        // sink still fails loudly on its own if the store is unusable.
-      }
-    }
+    initSenpiWorkspace(workspace);
 
     const result: GuardResult = await guardFn(call, {
       workspace,

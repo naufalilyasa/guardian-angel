@@ -265,4 +265,16 @@ describe("ensureStore", () => {
     expect(content).toContain("node_modules/");
     expect(content).toContain(".guardian-angel/");
   });
+
+  test("REGRESSION: restore refuses destination in protected path", () => {
+    const { workspace } = sandbox();
+    writeFileSync(join(workspace, "file.txt"), "hello", "utf8");
+    const id = safeDelete(workspace, "file.txt");
+    const metaPath = join(workspace, ".guardian-angel", "trash", id, "meta.json");
+    const meta = JSON.parse(readFileSync(metaPath, "utf8"));
+    meta.originalPath = join(workspace, ".guardian-angel", "hacked.json");
+    writeFileSync(metaPath, JSON.stringify(meta), "utf8");
+
+    expect(() => restore(workspace, id)).toThrow("GA_TRASH_REFUSED");
+  });
 });

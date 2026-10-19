@@ -687,4 +687,116 @@ describe("REGRESSION: overwrite detection and tool path normalization", () => {
     expect(subshellRm.verdict).toBe("block");
     expect(subshellRm.ruleId).toBe("block:rm-wrapper");
   });
+
+  test("REGRESSION: quoted and partial-quoted dd of= to protected store is blocked", () => {
+    const ws = "/ws";
+    const res1 = classify({
+      call: { toolName: "bash", input: { command: 'dd if=/dev/zero of=".guardian-angel/config.json"' } },
+      workspace: ws,
+    });
+    expect(res1.verdict).toBe("block");
+    expect(res1.ruleId).toBe("block:protected-bash-write");
+
+    const res2 = classify({
+      call: { toolName: "bash", input: { command: "dd if=/dev/zero of='.guardian-angel/audit.jsonl'" } },
+      workspace: ws,
+    });
+    expect(res2.verdict).toBe("block");
+    expect(res2.ruleId).toBe("block:protected-bash-write");
+
+    const res3 = classify({
+      call: { toolName: "bash", input: { command: 'dd if=/dev/zero of=".guardian-angel"/config.json' } },
+      workspace: ws,
+    });
+    expect(res3.verdict).toBe("block");
+    expect(res3.ruleId).toBe("block:protected-bash-write");
+  });
+
+  test("REGRESSION: bare & is treated as segment separator", () => {
+    const ws = "/ws";
+    const chained = classify({
+      call: { toolName: "bash", input: { command: "echo hi & rm file.txt" } },
+      workspace: ws,
+    });
+    expect(chained.verdict).toBe("block");
+    expect(chained.ruleId).toBe("block:rm-chained");
+
+    const trailing = classify({
+      call: { toolName: "bash", input: { command: "rm file.txt &" } },
+      workspace: ws,
+    });
+    expect(trailing.verdict).toBe("allow");
+    expect(trailing.ruleId).toBe("rewrite:rm-trash");
+    expect(trailing.replacement).toBeDefined();
+  });
+
+  test("REGRESSION: dynamic redirect targets and write verbs are blocked", () => {
+    const ws = "/ws";
+    const res1 = classify({
+      call: { toolName: "bash", input: { command: "echo {} > $(echo .guardian-angel/approvals.json)" } },
+      workspace: ws,
+    });
+    expect(res1.verdict).toBe("block");
+    expect(res1.ruleId).toBe("block:dynamic-redirect");
+
+    const res2 = classify({
+      call: { toolName: "bash", input: { command: "echo x >> `echo .guardian-angel/audit.jsonl`" } },
+      workspace: ws,
+    });
+    expect(res2.verdict).toBe("block");
+    expect(res2.ruleId).toBe("block:dynamic-redirect");
+
+    const res3 = classify({
+      call: { toolName: "bash", input: { command: "cp x $(echo .guardian-angel/config.json)" } },
+      workspace: ws,
+    });
+    expect(res3.verdict).toBe("block");
+    expect(res3.ruleId).toBe("block:dynamic-write-verb");
+  });
+
+  test("REGRESSION: path-prefixed /bin/rm is classified identically to rm", () => {
+    const ws = "/ws";
+    const rootWipe = classify({
+      call: { toolName: "bash", input: { command: "/bin/rm -rf /" } },
+      workspace: ws,
+    });
+    expect(rootWipe.verdict).toBe("block");
+
+    const rewrite = classify({
+      call: { toolName: "bash", input: { command: "/bin/rm ./build" } },
+      workspace: ws,
+    });
+    expect(rewrite.verdict).toBe("allow");
+    expect(rewrite.ruleId).toBe("rewrite:rm-trash");
+    expect(rewrite.replacement).toBeDefined();
+
+    const outside = classify({
+      call: { toolName: "bash", input: { command: "/usr/bin/rm -rf /outside/dir" } },
+      workspace: ws,
+    });
+    expect(outside.verdict).toBe("block");
+    expect(outside.ruleId).toBe("block:rm-outside");
+  });
+
+  test("REGRESSION: MAX_UNWRAP_DEPTH fails closed with ask:wrapper-depth", () => {
+    const ws = "/ws";
+    const deepCommand =
+      'bash -c "bash -c \\"bash -c \\\\\\"bash -c \\\\\\\\\\\\\\"bash -c \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"rm -rf /\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\"\\\\\\"\\""';
+    const res = classify({
+      call: { toolName: "bash", input: { command: deepCommand } },
+      workspace: ws,
+    });
+    expect(res.verdict).toBe("ask");
+    expect(res.ruleId).toBe("ask:wrapper-depth");
+  });
+
+  test("REGRESSION: fd duplication 2>&1 does not trigger false overwrite check", () => {
+    const ws = mkdtempSync(join(tmpdir(), "ga-fd-dup-"));
+    const res = classify({
+      call: { toolName: "bash", input: { command: "echo test 2>&1" } },
+      workspace: ws,
+    });
+    expect(res.verdict).toBe("allow");
+    rmSync(ws, { recursive: true, force: true });
+  });
 });
