@@ -51,13 +51,13 @@ export const GuardianAngelTui: TuiPlugin = async (
           title: `guardian-angel: ${req.ruleId}`,
           message: `${req.reason}\n\n[${req.tool}]: ${details}`,
           onConfirm: () => {
-            writeResponse(req.callID, "allow", ipcDir);
+            writeResponse(req.callID, "allow", ipcDir, req.nonce);
             api.ui.dialog.clear();
             showingDialog = false;
             processNext();
           },
           onCancel: () => {
-            writeResponse(req.callID, "deny", ipcDir);
+            writeResponse(req.callID, "deny", ipcDir, req.nonce);
             api.ui.dialog.clear();
             showingDialog = false;
             processNext();
@@ -76,6 +76,7 @@ export const GuardianAngelTui: TuiPlugin = async (
     const pending = listPendingRequests(ipcDir);
     for (const req of pending) {
       if (!processedCallIds.has(req.callID)) {
+        if (processedCallIds.size > 1000) processedCallIds.clear();
         processedCallIds.add(req.callID);
         queue.push(req);
       }

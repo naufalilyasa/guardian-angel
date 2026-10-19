@@ -141,7 +141,7 @@ macOS tidak pernah menjalankan test destruktif. Satu-satunya eksekusi di host ad
 
 ## Batas POC (jujur)
 
-- Bukan parser shell POSIX penuh. Masih `KNOWN BYPASS` (tercatat di `test/fixtures/redteam.jsonl`): ANSI-C quoting, base64 yang di-decode lalu di-pipe, interpreter payload (`python3 -c`), dan `ssh`. `bash -c`, `eval`, `$(…)`, `xargs`, `find -exec`, path absolut (`/bin/rm`), subshell `(...)`, dan env-assignment prefixes sudah ditangani.
+- Bukan parser shell POSIX penuh. Masih `KNOWN BYPASS` (tercatat di `test/fixtures/redteam.jsonl`): ANSI-C quoting, base64 yang di-decode lalu di-pipe, interpreter payload (`python3 -c`), dan `ssh`. `bash -c`, `eval`, `$(…)`, `<(...)`, `>(...)`, `xargs`, `find -exec`, path absolut (`/bin/rm`), subshell `(...)`, env-assignment prefixes, bare `&` chaining, quote-split command words (`r'm'`, `d'd'`), pelacakan compound `cd`, ekspansi tilde (`~`), dan eksekusi command via variabel (`$CMD`, `${CMD}`) sudah ditangani.
 - `write`/`edit` memakai resolusi fisik: symlink di komponen path yang sudah ada diikuti, dan target yang keluar workspace menjadi `ask` (bukan `allow`). `rm`/`ga trash` menolak symlink secara fail-closed. Symlink tetap bukan sandbox.
 - Deteksi SQL berbasis pola; **semua** payload (`-e`/`-c`/`--execute`, berulang) diklasifikasi dan diambil yang terberat, tapi `-f/--file` dan redirect file selalu `ask` karena classifier murni tidak membaca file. Bukan pengganti DB guard.
 - Trash harus satu volume dengan workspace (EXDEV → error jelas, tanpa fallback copy+delete).

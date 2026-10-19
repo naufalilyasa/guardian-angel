@@ -853,4 +853,118 @@ describe("REGRESSION: overwrite detection and tool path normalization", () => {
     expect(p4.verdict).toBe("block");
     expect(p4.ruleId).toBe("block:dynamic-redirect");
   });
+
+  test("REGRESSION: quote-split command names are normalized and intercepted", () => {
+    const ws = "/ws";
+    const res1 = classify({
+      call: { toolName: "bash", input: { command: "d'd' of=.guardian-angel/audit.jsonl if=/dev/zero" } },
+      workspace: ws,
+    });
+    expect(res1.verdict).toBe("block");
+    expect(res1.ruleId).toBe("block:protected-bash-write");
+
+    const res2 = classify({
+      call: { toolName: "bash", input: { command: "r'm' -rf /" } },
+      workspace: ws,
+    });
+    expect(res2.verdict).toBe("block");
+    expect(res2.ruleId).toBe("block:rm-root");
+
+    const res3 = classify({
+      call: { toolName: "bash", input: { command: "r'm' -rf ~" } },
+      workspace: ws,
+    });
+    expect(res3.verdict).toBe("block");
+    expect(res3.ruleId).toBe("block:rm-home");
+
+    const res4 = classify({
+      call: { toolName: "bash", input: { command: "r'm' ./build" } },
+      workspace: ws,
+    });
+    expect(res4.verdict).toBe("allow");
+    expect(res4.ruleId).toBe("rewrite:rm-trash");
+
+    const res5 = classify({
+      call: { toolName: "bash", input: { command: "rm -- ./build" } },
+      workspace: ws,
+    });
+    expect(res5.verdict).toBe("allow");
+    expect(res5.ruleId).toBe("rewrite:rm-trash");
+  });
+
+  test("REGRESSION: braced variable, positional, and quoted variable commands are intercepted", () => {
+    const ws = "/ws";
+    const res1 = classify({
+      call: { toolName: "bash", input: { command: "CMD=rm; ${CMD} -rf src" } },
+      workspace: ws,
+    });
+    expect(res1.verdict).toBe("ask");
+    expect(res1.ruleId).toBe("ask:variable-command");
+
+    const res2 = classify({
+      call: { toolName: "bash", input: { command: 'CMD=rm; "$CMD" -rf src' } },
+      workspace: ws,
+    });
+    expect(res2.verdict).toBe("ask");
+    expect(res2.ruleId).toBe("ask:variable-command");
+
+    const res3 = classify({
+      call: { toolName: "bash", input: { command: "set -- rm; $1 -rf src" } },
+      workspace: ws,
+    });
+    expect(res3.verdict).toBe("ask");
+    expect(res3.ruleId).toBe("ask:variable-command");
+  });
+
+  test("REGRESSION: cd compound commands track effective cwd and protect store", () => {
+    const ws = "/ws";
+    const res1 = classify({
+      call: { toolName: "bash", input: { command: "cd .guardian-angel && cat /dev/null > audit.jsonl" } },
+      workspace: ws,
+    });
+    expect(res1.verdict).toBe("block");
+    expect(res1.ruleId).toBe("block:cd-protected");
+
+    const res2 = classify({
+      call: { toolName: "bash", input: { command: "cd .git && echo x > config" } },
+      workspace: ws,
+    });
+    expect(res2.verdict).toBe("block");
+    expect(res2.ruleId).toBe("block:cd-protected");
+
+    const res3 = classify({
+      call: { toolName: "bash", input: { command: "cd /tmp && echo x > pwned" } },
+      workspace: ws,
+    });
+    expect(res3.verdict).toBe("ask");
+    expect(res3.ruleId).toBe("ask:write-outside");
+  });
+
+  test("REGRESSION: tilde expansion on write targets is contained", () => {
+    const ws = "/ws";
+    const res1 = classify({
+      call: { toolName: "bash", input: { command: "echo x > ~/.zshrc" } },
+      workspace: ws,
+    });
+    expect(res1.verdict).toBe("ask");
+    expect(res1.ruleId).toBe("ask:write-outside");
+
+    const res2 = classify({
+      call: { toolName: "bash", input: { command: "echo x > ~/.config/guardian-angel/config.json" } },
+      workspace: ws,
+    });
+    expect(res2.verdict).toBe("ask");
+    expect(res2.ruleId).toBe("ask:write-outside");
+  });
+
+  test("REGRESSION: launcher depth limit fails closed", () => {
+    const ws = "/ws";
+    const deepLaunchers = "env ".repeat(12) + "rm -rf /";
+    const res = classify({
+      call: { toolName: "bash", input: { command: deepLaunchers } },
+      workspace: ws,
+    });
+    expect(res.verdict).toBe("ask");
+    expect(res.ruleId).toBe("ask:launcher-depth");
+  });
 });

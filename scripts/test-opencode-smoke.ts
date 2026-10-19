@@ -49,7 +49,7 @@ export { GuardianAngelServer };
 );
 
 function runAgent(prompt: string): { status: number; output: string } {
-  const model = process.env.GA_TEST_MODEL || "9router/cbai/glm-5.3-flash";
+  const model = process.env.GA_TEST_MODEL || "9router/cbai/deepseek-v4.1-flash";
   const proc = spawnSync(
     "/opt/homebrew/bin/opencode",
     [

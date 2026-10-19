@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -7,6 +8,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { tmpdir, userInfo } from "node:os";
 import type { IpcHeartbeat, IpcRequest, IpcResponse } from "./types.ts";
@@ -27,6 +29,9 @@ export function getDefaultIpcDir(): string {
 export function ensureIpcDir(ipcDir = getDefaultIpcDir()): string {
   try {
     mkdirSync(ipcDir, { recursive: true, mode: 0o700 });
+    try {
+      chmodSync(ipcDir, 0o700);
+    } catch {}
   } catch {
     // directory may already exist
   }
@@ -68,10 +73,13 @@ export function isTuiActive(ipcDir = getDefaultIpcDir(), maxAgeMs = 5000): boole
   }
 }
 
-export function writeRequest(req: IpcRequest, ipcDir = getDefaultIpcDir()): void {
+export function writeRequest(req: IpcRequest, ipcDir = getDefaultIpcDir()): string {
   ensureIpcDir(ipcDir);
+  const nonce = req.nonce ?? randomUUID();
+  const fullReq: IpcRequest = { ...req, nonce };
   const target = join(ipcDir, `request-${req.callID}.json`);
-  writeFileSync(target, JSON.stringify(req, null, 2), "utf-8");
+  writeFileSync(target, JSON.stringify(fullReq, null, 2), { encoding: "utf-8", mode: 0o600 });
+  return nonce;
 }
 
 export function readResponse(callID: string, ipcDir = getDefaultIpcDir()): IpcResponse | null {
@@ -89,15 +97,29 @@ export function writeResponse(
   callID: string,
   decision: "allow" | "deny",
   ipcDir = getDefaultIpcDir(),
+  nonce?: string,
 ): void {
   ensureIpcDir(ipcDir);
+  let effectiveNonce = nonce;
+  if (!effectiveNonce) {
+    try {
+      const reqFile = join(ipcDir, `request-${callID}.json`);
+      if (existsSync(reqFile)) {
+        const req = JSON.parse(readFileSync(reqFile, "utf-8")) as IpcRequest;
+        effectiveNonce = req.nonce;
+      }
+    } catch {
+      // ignore
+    }
+  }
   const res: IpcResponse = {
     callID,
     decision,
     answeredAt: Date.now(),
+    ...(effectiveNonce ? { nonce: effectiveNonce } : {}),
   };
   const target = join(ipcDir, `response-${callID}.json`);
-  writeFileSync(target, JSON.stringify(res, null, 2), "utf-8");
+  writeFileSync(target, JSON.stringify(res, null, 2), { encoding: "utf-8", mode: 0o600 });
 }
 
 export function cleanupCall(callID: string, ipcDir = getDefaultIpcDir()): void {
@@ -173,10 +195,16 @@ export async function waitForResponse(
   deadline: number,
   ipcDir = getDefaultIpcDir(),
   pollIntervalMs = 150,
+  expectedNonce?: string,
 ): Promise<IpcResponse | null> {
   while (Date.now() < deadline) {
     const res = readResponse(callID, ipcDir);
-    if (res) return res;
+    if (res) {
+      if (expectedNonce && res.nonce !== expectedNonce) {
+        return null;
+      }
+      return res;
+    }
     await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
   return null;

@@ -1,5 +1,18 @@
 import { lstatSync, readlinkSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, resolve, sep } from "node:path";
+
+/**
+ * Expand a leading `~` or `~/` to the user's home directory.
+ */
+export function expandHome(input: string): string {
+  if (!input) return input;
+  if (input === "~") return homedir();
+  if (input.startsWith("~/") || input.startsWith("~\\")) {
+    return resolve(homedir(), input.slice(2));
+  }
+  return input;
+}
 
 /**
  * Resolve `input` against `workspace` without touching the filesystem.
@@ -8,7 +21,7 @@ import { basename, dirname, resolve, sep } from "node:path";
  * realpath/symlink resolution is performed.
  */
 export function resolveLexical(workspace: string, input: string): string {
-  return resolve(workspace, input);
+  return resolve(workspace, expandHome(input));
 }
 
 /**
@@ -37,7 +50,7 @@ export function isInsideWorkspace(
  * as an in-workspace path. The non-existent tail is appended verbatim.
  */
 export function resolvePhysical(workspace: string, input: string): string {
-  let current = resolve(workspace, input);
+  let current = resolve(workspace, expandHome(input));
   const tail: string[] = [];
   const seen = new Set<string>();
   let hops = 0;

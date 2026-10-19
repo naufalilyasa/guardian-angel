@@ -10,12 +10,14 @@ export type IpcRequest = {
   ruleId: string;
   createdAt: number;
   deadline: number;
+  nonce?: string;
 };
 
 export type IpcResponse = {
   callID: string;
   decision: IpcDecision;
   answeredAt: number;
+  nonce?: string;
 };
 
 export type IpcHeartbeat = {

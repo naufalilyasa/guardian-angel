@@ -144,8 +144,8 @@ async function requestTuiApproval(
   };
 
   try {
-    writeRequest(req, ipcDir);
-    const response = await waitForResponse(input.callID, deadline, ipcDir, 150);
+    const nonce = writeRequest(req, ipcDir);
+    const response = await waitForResponse(input.callID, deadline, ipcDir, 150, nonce);
 
     if (!response || response.decision !== "allow") {
       recordDenial(cacheKey, 30_000, nowFn());
