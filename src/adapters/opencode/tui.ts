@@ -94,4 +94,7 @@ export const GuardianAngelTui: TuiPlugin = async (
   });
 };
 
-export default { tui: GuardianAngelTui };
+export default {
+  id: "guardian-angel",
+  tui: GuardianAngelTui,
+};

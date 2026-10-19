@@ -7,6 +7,7 @@ import {
   createHookHandler,
   toToolCall,
 } from "../src/adapters/opencode/server.ts";
+import { BUILTIN_RULES } from "../src/core/policy.ts";
 import { GuardianAngelTui } from "../src/adapters/opencode/tui.ts";
 import {
   ensureIpcDir,
@@ -179,6 +180,7 @@ describe("OpenCode Adapter", () => {
         pkgRoot: join(import.meta.dir, ".."),
         ipcDir,
         confirmTimeoutMs: 2000,
+        loadPolicy: () => ({ rules: [...BUILTIN_RULES], warnings: [] }),
       });
 
       writeHeartbeat(ipcDir);

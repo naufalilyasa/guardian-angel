@@ -6,7 +6,9 @@
   "bin": {
     "ga": "./src/cli/ga.ts"
   },
+  "main": "./src/adapters/opencode/server.ts",
   "exports": {
+    ".": "./src/adapters/opencode/server.ts",
     "./server": "./src/adapters/opencode/server.ts",
     "./tui": "./src/adapters/opencode/tui.ts",
     "./opencode-server": "./src/adapters/opencode/server.ts",
