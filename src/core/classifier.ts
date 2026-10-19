@@ -414,7 +414,8 @@ function classifySingleRmOperand(rawOperand: string, workspace: string): GuardRe
     };
   }
 
-  if (!isInsideWorkspace(workspace, target)) {
+  const inside = isInsideWorkspace(workspace, target) || isInsideWorkspacePhysical(workspace, target);
+  if (!inside) {
     return {
       verdict: "block",
       reason: `trash hanya mencakup workspace; ${target} berada di luar workspace`,
@@ -422,10 +423,14 @@ function classifySingleRmOperand(rawOperand: string, workspace: string): GuardRe
     };
   }
 
-  if (isProtectedPath(workspace, target)) {
+  const effectiveTarget = isInsideWorkspace(workspace, target)
+    ? target
+    : resolvePhysical(workspace, target);
+
+  if (isProtectedPath(workspace, effectiveTarget)) {
     return {
       verdict: "block",
-      reason: protectedReason(target),
+      reason: protectedReason(effectiveTarget),
       ruleId: "block:rm-protected",
     };
   }
@@ -433,7 +438,7 @@ function classifySingleRmOperand(rawOperand: string, workspace: string): GuardRe
   return {
     verdict: "allow",
     reason: "rewritten to trash",
-    replacement: { kind: "trash", path: target },
+    replacement: { kind: "trash", path: effectiveTarget },
     ruleId: "rewrite:rm-trash",
   };
 }

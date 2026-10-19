@@ -7,6 +7,8 @@
     "ga": "./src/cli/ga.ts"
   },
   "exports": {
+    "./server": "./src/adapters/opencode/server.ts",
+    "./tui": "./src/adapters/opencode/tui.ts",
     "./opencode-server": "./src/adapters/opencode/server.ts",
     "./opencode-tui": "./src/adapters/opencode/tui.ts",
     "./senpi": "./src/adapters/senpi.ts"
