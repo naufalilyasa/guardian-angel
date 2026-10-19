@@ -136,7 +136,7 @@ function classifyWithPolicy(call: ToolCall, deps: GuardDeps): GuardResult {
 }
 
 function handleClassifierError(call: ToolCall, deps: GuardDeps, error: unknown): GuardResult {
-  const command = typeof call.input.command === "string" ? call.input.command : "";
+  const command = typeof call.input?.command === "string" ? call.input.command : "";
   const destructive = DESTRUCTIVE_FALLBACK.test(command);
   const tier: Tier = destructive ? "block" : "allow";
   const reason = `classifier_error: ${(error as Error).message}`;

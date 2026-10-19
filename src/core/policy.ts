@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type { PolicyConfig, PolicyRule, Tier } from "./types.ts";
 
@@ -203,8 +204,8 @@ export function loadPolicyFromFiles(opts: {
   env?: Record<string, string | undefined>;
 }): LoadedPolicy {
   const warnings: string[] = [];
-  const env = opts.env ?? {};
-  const home = opts.home ?? env.HOME;
+  const env = opts.env ?? process.env;
+  const home = opts.home ?? env.HOME ?? (opts.env ? undefined : homedir());
   const xdg = env.XDG_CONFIG_HOME;
 
   const layers: PolicyLayer[] = [
