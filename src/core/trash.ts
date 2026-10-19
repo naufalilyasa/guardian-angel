@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
-import { assertInSandbox, isInsideWorkspace, resolveLexical } from "./paths.ts";
+import { assertInSandbox, isInsideWorkspace, isInsideWorkspacePhysical, resolveLexical, resolvePhysical } from "./paths.ts";
 import { isProtectedPath, protectedReason } from "./protected.ts";
 import { ensureStore, trashDir } from "./store.ts";
 
@@ -65,12 +65,14 @@ function readEntry(workspace: string, id: string): TrashEntry | null {
 }
 
 function assertNoSymlinkComponents(workspace: string, target: string): void {
-  const rel = relative(workspace, target);
+  const root = isInsideWorkspace(workspace, target) ? workspace : resolvePhysical(workspace, workspace);
+  const targetResolved = isInsideWorkspace(workspace, target) ? target : resolvePhysical(workspace, target);
+  const rel = relative(root, targetResolved);
   if (rel.length === 0 || rel.startsWith("..") || isAbsolute(rel)) {
     throw new Error(`GA_TRASH_REFUSED: outside workspace: ${target}`);
   }
 
-  let current = workspace;
+  let current = root;
   for (const part of rel.split(sep).filter((p) => p.length > 0)) {
     current = join(current, part);
     if (!existsSync(current)) return;
@@ -81,7 +83,7 @@ function assertNoSymlinkComponents(workspace: string, target: string): void {
 }
 
 function validateSafeDelete(workspace: string, resolved: string) {
-  if (!isInsideWorkspace(workspace, resolved)) {
+  if (!isInsideWorkspace(workspace, resolved) && !isInsideWorkspacePhysical(workspace, resolved)) {
     throw new Error(`GA_TRASH_REFUSED: outside workspace: ${resolved}`);
   }
   // Trashing the store would move the audit log and approvals out of the way
@@ -186,7 +188,7 @@ export function restore(workspace: string, id: string): string {
     throw new Error(`GA_TRASH_RESTORE_CONFLICT: ${entry.originalPath}`);
   }
 
-  if (!isInsideWorkspace(workspace, entry.originalPath)) {
+  if (!isInsideWorkspace(workspace, entry.originalPath) && !isInsideWorkspacePhysical(workspace, entry.originalPath)) {
     throw new Error(`GA_TRASH_REFUSED: outside workspace: ${entry.originalPath}`);
   }
   if (isProtectedPath(workspace, entry.originalPath)) {

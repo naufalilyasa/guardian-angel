@@ -112,7 +112,7 @@ export function assertInSandbox(path: string, sandboxRoot: string): void {
   const root = resolve(sandboxRoot);
   const resolved = resolve(sandboxRoot, path);
 
-  if (!isInsideWorkspace(root, resolved)) {
+  if (!isInsideWorkspace(root, resolved) && !isInsideWorkspacePhysical(root, resolved)) {
     throw new Error(
       `GA_SANDBOX_VIOLATION: ${resolved} is outside sandbox ${root}`,
     );

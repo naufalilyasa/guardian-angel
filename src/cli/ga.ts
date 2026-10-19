@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { existsSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { gc, listTrash, restore, safeDelete, TRASH_TTL_MS } from "../core/trash.ts";
 import { auditFile, ensureStore } from "../core/store.ts";
@@ -43,13 +43,23 @@ function parseArgs(argv: string[]): { workspace: string; args: string[] } {
     args.push(argv[i]);
   }
 
-  return { workspace: resolve(workspace), args };
+  let workspaceRoot = resolve(workspace);
+  try {
+    workspaceRoot = realpathSync(workspaceRoot);
+  } catch {}
+
+  return { workspace: workspaceRoot, args };
 }
 
 function cmdTrash(workspace: string, args: string[]): void {
   const target = args[0];
   if (!target) fail("ga trash memerlukan <path>");
-  if (!existsSync(resolve(workspace, target))) fail(`tidak ditemukan: ${target}`);
+  const resolved = resolve(workspace, target);
+  let physicalTarget = resolved;
+  try {
+    physicalTarget = realpathSync(resolved);
+  } catch {}
+  if (!existsSync(resolved) && !existsSync(physicalTarget)) fail(`tidak ditemukan: ${target}`);
 
   const id = safeDelete(workspace, target);
   process.stdout.write(`${id}\n`);

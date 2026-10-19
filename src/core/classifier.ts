@@ -10,6 +10,7 @@ import {
   resolvePhysical,
 } from "./paths.ts";
 import { isProtectedPath, protectedReason } from "./protected.ts";
+import { classifySql } from "./sql.ts";
 
 export type ClassifierInput = {
   call: ToolCall;
@@ -187,7 +188,10 @@ function unwrapAll(segment: string): string[] {
       if (SHELLS.has(program)) {
         const flagIndex = head.findIndex((token) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(stripQuotes(token)));
         if (flagIndex !== -1 && head.length > flagIndex + 1) {
-          inners.push(unquote(head.slice(flagIndex + 1).join(" ")));
+          const payload = unquote(head[flagIndex + 1]);
+          if (payload.trim()) inners.push(payload.trim());
+          const rest = unquote(head.slice(flagIndex + 1).join(" "));
+          if (rest.trim() && rest.trim() !== payload.trim()) inners.push(rest.trim());
         }
         const hereIndex = head.findIndex((token) => token.startsWith("<<<"));
         if (hereIndex !== -1) {
@@ -195,10 +199,10 @@ function unwrapAll(segment: string): string[] {
           if (raw.trim()) inners.push(unquote(raw.trim()));
         }
       } else if (program === "eval" && head.length > 1) {
-        const raw = unquote(head.slice(1).join(" ")).trim();
-        if (raw && !/^\$\(|^`/.test(raw)) {
-          inners.push(raw);
-        }
+        const first = unquote(head[1]).trim();
+        if (first && !/^\$\(|^`/.test(first)) inners.push(first);
+        const full = head.slice(1).map(unquote).join(" ").trim();
+        if (full && full !== first && !/^\$\(|^`/.test(full)) inners.push(full);
       }
     }
   }
@@ -971,6 +975,15 @@ function classifyCommand(
     if (re.test(normalized)) return { verdict: "block", reason, ruleId: id };
   }
 
+  const sql = classifySql(normalized);
+  if (sql && sql.verdict === "block") {
+    return {
+      verdict: "block",
+      reason: sql.reason ?? "perintah SQL diblokir",
+      ruleId: `sql:${sql.verdict}`,
+    };
+  }
+
   const wrapper = classifyUnwrapped(normalized, workspace, depth);
   if (wrapper && wrapper.verdict === "block") return wrapper;
 
@@ -1015,6 +1028,14 @@ function classifyCommand(
   let effective: GuardResult | null = blockedRewrite ?? effectiveRm;
   if (wrapper && wrapper.verdict === "ask") {
     effective = effective ? stricter(effective, wrapper) : wrapper;
+  }
+  if (sql && sql.verdict === "ask") {
+    const sqlAsk: GuardResult = {
+      verdict: "ask",
+      reason: sql.reason ?? "perintah SQL memerlukan persetujuan",
+      ruleId: `sql:${sql.verdict}`,
+    };
+    effective = effective ? stricter(effective, sqlAsk) : sqlAsk;
   }
 
   for (const { id, re, reason } of ASK_PATTERNS) {
