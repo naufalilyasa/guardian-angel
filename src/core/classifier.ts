@@ -22,7 +22,13 @@ const BLOCK_PATTERNS: Array<{ id: string; re: RegExp; reason: string }> = [
   { id: "block:rm-root", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?rm\s+(-[a-zA-Z]*[rR][a-zA-Z]*\s+)*-[a-zA-Z]*f[a-zA-Z]*\s+\/([\s;)|]|$)/, reason: "rm -rf pada root filesystem diblokir" },
   { id: "block:rm-home", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?rm\s+(-[a-zA-Z]+\s+)*~([\s;)|]|$)/, reason: "rm pada home directory diblokir" },
   { id: "block:rm-home-env", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?rm\s+(-[a-zA-Z]+\s+)*\$HOME([\s;)|]|$)/, reason: "rm pada $HOME diblokir" },
-  { id: "block:protected-rm", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?(rm|unlink|shred)\b[^\n]*\.(guardian-angel|git)\b/, reason: "penghapusan direktori proteksi (.guardian-angel atau .git) diblokir" },
+    {
+    id: "block:protected-bash-write",
+    re: /(^|[\s;&|('"`])env\s+[^\n]*?(-C|--chdir[=\s])\s*['"]?\.?(guardian-angel|git)\b/,
+    reason: "eksekusi perintah di dalam direktori proteksi (.guardian-angel atau .git) diblokir",
+  },
+  {
+    id: "block:protected-rm", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?(rm|unlink|shred)\b[^\n]*\.(guardian-angel|git)\b/, reason: "penghapusan direktori proteksi (.guardian-angel atau .git) diblokir" },
   { id: "block:git-clean-ignored", re: /(^|[\s;|&(])git\s+clean\b[^\n]*\s-[^\n]*[xX]/, reason: "git clean dengan flag -x/-X menghapus ignored files termasuk store dan diblokir" },
   { id: "block:mkfs", re: /(^|[\s;|&(])mkfs(\.[a-z0-9]+)?([\s;)|]|$)/, reason: "mkfs memformat filesystem dan diblokir" },
   { id: "block:dd-device", re: /\bdd\b[^\n]*\bof=\/dev\//, reason: "dd menulis langsung ke block device dan diblokir" },
@@ -67,6 +73,10 @@ export function stripQuotes(token: string): string {
   return token.replace(/^\$['"]/, "").replace(/['"\\]/g, "");
 }
 
+const LAUNCHER_VAL_FLAGS = new Set([
+  "-n", "-c", "-u", "-C", "--chdir", "-I", "-d", "-i", "-o", "-e", "-s",
+]);
+
 /**
  * Strip a leading launcher and its flags so the real command becomes visible.
  * Returns the remaining tokens and a flag indicating whether launcher depth was exceeded.
@@ -87,13 +97,21 @@ function stripLaunchers(tokens: string[]): { tokens: string[]; hitLimit: boolean
 
     if (LAUNCHERS.has(head)) {
       rest = rest.slice(1);
-      // Consume the launcher's own flags/assignments. `timeout` also takes a
-      // duration and `xargs` an optional command slot, both handled below.
-      while (
-        rest.length > 0 &&
-        (rest[0].startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(stripQuotes(rest[0])))
-      ) {
-        rest = rest.slice(1);
+      while (rest.length > 0) {
+        const flagToken = stripQuotes(rest[0]);
+        if (flagToken.startsWith("--chdir=")) {
+          rest = rest.slice(1);
+          continue;
+        }
+        if (LAUNCHER_VAL_FLAGS.has(flagToken) && rest.length > 1 && !rest[1].startsWith("-")) {
+          rest = rest.slice(2);
+          continue;
+        }
+        if (flagToken.startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(flagToken)) {
+          rest = rest.slice(1);
+          continue;
+        }
+        break;
       }
       if (head === "timeout" && rest.length > 0 && /^[0-9]/.test(stripQuotes(rest[0]))) {
         rest = rest.slice(1);
@@ -120,6 +138,32 @@ function stripLaunchers(tokens: string[]): { tokens: string[]; hitLimit: boolean
   return { tokens: rest, hitLimit };
 }
 
+function extractParenGroups(str: string): string[] {
+  const groups: string[] = [];
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    if (ch === "(") {
+      if (depth === 0) start = i + 1;
+      depth++;
+    } else if (ch === ")" && depth > 0) {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        const inner = str.slice(start, i).trim();
+        if (inner) {
+          groups.push(inner);
+          if (inner.includes("(")) {
+            groups.push(...extractParenGroups(inner));
+          }
+        }
+        start = -1;
+      }
+    }
+  }
+  return groups;
+}
+
 /**
  * Unwrap all levels of indirection in a segment: `bash -c "..."`, `eval "..."`,
  * `sh -c '...'`, parenthesized subshell commands `(...)`, and all `$(...)`/backtick payloads.
@@ -129,10 +173,8 @@ function unwrapAll(segment: string): string[] {
   const inners: string[] = [];
   const trimmed = segment.trim();
 
-  // Match parenthesized subshell anywhere in the segment (e.g. `(rm x) 2>/dev/null`, `time (rm x)`)
-  const parenMatch = trimmed.match(/(?:^|[\s;&|])\(([^()]+)\)/);
-  if (parenMatch && parenMatch[1].trim()) {
-    inners.push(parenMatch[1].trim());
+  for (const group of extractParenGroups(trimmed)) {
+    inners.push(group);
   }
 
   const tokens = tokenize(segment);
@@ -140,7 +182,8 @@ function unwrapAll(segment: string): string[] {
   if (tokens.length > 0) {
     const { tokens: head } = stripLaunchers(tokens);
     if (head.length > 0) {
-      const program = stripQuotes(head[0].split("/").pop() ?? head[0]);
+      const rawProg = head[0].split("/").pop() ?? head[0];
+      const program = stripQuotes(rawProg).replace(/^[()]+|[()]+$/g, "");
       if (SHELLS.has(program)) {
         const flagIndex = head.findIndex((token) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(stripQuotes(token)));
         if (flagIndex !== -1 && head.length > flagIndex + 1) {
@@ -153,7 +196,7 @@ function unwrapAll(segment: string): string[] {
         }
       } else if (program === "eval" && head.length > 1) {
         const raw = unquote(head.slice(1).join(" ")).trim();
-        if (!/^\$\(|^`/.test(raw)) {
+        if (raw && !/^\$\(|^`/.test(raw)) {
           inners.push(raw);
         }
       }
@@ -285,10 +328,13 @@ function checkDelegatedRm(rawTokens: string[], program: string): GuardResult | n
     }
   }
 
-  const { tokens } = stripLaunchers(rawTokens);
-  if (program === "xargs") {
-    const verb = stripQuotes(tokens[0]?.split("/").pop() ?? tokens[0] ?? "");
-    if (verb === "rm" || verb === "unlink" || verb === "shred") {
+  const isXargs = program === "xargs" || rawTokens.some((t) => basenameOf(stripQuotes(t)) === "xargs");
+  if (isXargs) {
+    const hasRm = rawTokens.some((t) => {
+      const b = basenameOf(stripQuotes(t));
+      return b === "rm" || b === "unlink" || b === "shred";
+    });
+    if (hasRm) {
       return {
         verdict: "block",
         reason: "xargs rm mengambil target dari stdin dan tidak dapat diverifikasi; jalankan ga trash <path> per target",
@@ -390,7 +436,7 @@ function classifySingleRmOperand(rawOperand: string, workspace: string): GuardRe
 
 function classifyRm(segment: string, workspace: string): GuardResult | null {
   const rawTokens = tokenize(segment);
-  const program = stripQuotes(rawTokens[0]?.split("/").pop() ?? rawTokens[0] ?? "");
+  const program = stripQuotes(rawTokens[0]?.split("/").pop() ?? rawTokens[0] ?? "").replace(/^[()]+|[()]+$/g, "");
 
   const delegated = checkDelegatedRm(rawTokens, program);
   if (delegated) return delegated;
@@ -403,7 +449,7 @@ function classifyRm(segment: string, workspace: string): GuardResult | null {
       ruleId: "ask:launcher-depth",
     };
   }
-  const progName = stripQuotes(tokens[0]?.split("/").pop() ?? tokens[0] ?? "");
+  const progName = stripQuotes(tokens[0]?.split("/").pop() ?? tokens[0] ?? "").replace(/^[()]+|[()]+$/g, "");
   if (progName !== "rm") return null;
 
   const { operands, error } = parseRmOperands(tokens);
@@ -549,15 +595,17 @@ function classifyProtectedWrite(
     }
 
     const tokens = tokenize(segment).map(unquote);
-    const verbIndex = tokens.findIndex((token) => WRITE_VERBS.has(stripQuotes(basenameOf(token))));
+    const verbIndex = tokens.findIndex((token) =>
+      WRITE_VERBS.has(stripQuotes(basenameOf(token)).replace(/^[()]+|[()]+$/g, "")),
+    );
     if (verbIndex === -1) continue;
 
     for (const rawToken of tokens.slice(verbIndex + 1)) {
       let token = rawToken;
       if (token.startsWith("of=")) token = token.slice(3);
       else if (token.startsWith("--output=")) token = token.slice(9);
-      token = unquote(token).replace(/['"\\]/g, "");
-      if (token.startsWith("-")) continue;
+      token = unquote(token).replace(/^[()]+|[()]+$/g, "").replace(/['"\\]/g, "");
+      if (token.startsWith("-") || /^(?:[0-9]+)?>>?|^(?:[0-9]+)?<|^&>/.test(token)) continue;
       if (/[$`<>()]/.test(token)) {
         return {
           verdict: "block",

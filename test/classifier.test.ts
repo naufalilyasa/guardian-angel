@@ -1094,4 +1094,48 @@ describe("REGRESSION: overwrite detection and tool path normalization", () => {
     expect(r8.verdict).toBe("block");
     expect(r8.ruleId).toBe("block:rm-home");
   });
+
+  test("REGRESSION: launcher argument values, nested parens, and xargs flags are intercepted", () => {
+    const ws = "/ws";
+
+    const r1 = classify({
+      call: { toolName: "bash", input: { command: "env -C .guardian-angel rm audit.jsonl" } },
+      workspace: ws,
+    });
+    expect(r1.verdict).toBe("block");
+    expect(r1.ruleId).toBe("block:protected-bash-write");
+
+    const r2 = classify({
+      call: { toolName: "bash", input: { command: "nice -n 5 rm /tmp/outside.txt" } },
+      workspace: ws,
+    });
+    expect(r2.verdict).toBe("block");
+    expect(r2.ruleId).toBe("block:rm-outside");
+
+    const r3 = classify({
+      call: { toolName: "bash", input: { command: "nice -n 5 rm ./build" } },
+      workspace: ws,
+    });
+    expect(r3.verdict).toBe("allow");
+    expect(r3.ruleId).toBe("rewrite:rm-trash");
+
+    const r4 = classify({
+      call: { toolName: "bash", input: { command: "find . | xargs -I REPL rm REPL" } },
+      workspace: ws,
+    });
+    expect(r4.verdict).toBe("block");
+    expect(r4.ruleId).toBe("block:rm-xargs");
+
+    const r5 = classify({
+      call: { toolName: "bash", input: { command: "((dd of=.guardian-angel/config.json); true)" } },
+      workspace: ws,
+    });
+    expect(r5.verdict).toBe("block");
+
+    const r6 = classify({
+      call: { toolName: "bash", input: { command: "((rm file.txt); true)" } },
+      workspace: ws,
+    });
+    expect(r6.verdict).toBe("block");
+  });
 });
