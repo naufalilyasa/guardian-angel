@@ -43,27 +43,40 @@ export const GuardianAngelTui: TuiPlugin = async (
     }
 
     showingDialog = true;
+    let settled = false;
+
+    // Settle exactly once: the first of confirm/cancel/onClose wins. Later
+    // signals (e.g. the onClose fired by our own dialog.clear()) are ignored,
+    // so an allow response can never be overwritten by a late deny.
+    const settle = (decision: "allow" | "deny"): void => {
+      if (settled) return;
+      settled = true;
+      writeResponse(req.callID, decision, ipcDir, req.nonce);
+      showingDialog = false;
+      try {
+        api.ui.dialog.clear();
+      } catch {
+        // ignore
+      }
+      processNext();
+    };
 
     try {
       const details = req.command ?? req.path ?? "(tidak ada teks tambahan)";
-      api.ui.dialog.replace(() => {
-        return api.ui.DialogConfirm({
-          title: `guardian-angel: ${req.ruleId}`,
-          message: `${req.reason}\n\n[${req.tool}]: ${details}`,
-          onConfirm: () => {
-            writeResponse(req.callID, "allow", ipcDir, req.nonce);
-            api.ui.dialog.clear();
-            showingDialog = false;
-            processNext();
-          },
-          onCancel: () => {
-            writeResponse(req.callID, "deny", ipcDir, req.nonce);
-            api.ui.dialog.clear();
-            showingDialog = false;
-            processNext();
-          },
-        });
-      });
+      api.ui.dialog.replace(
+        () => {
+          return api.ui.DialogConfirm({
+            title: `guardian-angel: ${req.ruleId}`,
+            message: `${req.reason}\n\n[${req.tool}]: ${details}`,
+            onConfirm: () => settle("allow"),
+            onCancel: () => settle("deny"),
+          });
+        },
+        // ESC, backdrop click, or any programmatic close means "no answer" —
+        // fail closed with an explicit deny instead of letting the server time
+        // out and mislabel it as a user denial.
+        () => settle("deny"),
+      );
     } catch {
       showingDialog = false;
       cleanupCall(req.callID, ipcDir);

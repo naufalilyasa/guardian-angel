@@ -190,19 +190,25 @@ async function promptAndRecordApproval(
   command: string | undefined,
   now: number,
 ): Promise<GuardResult> {
-  const approved = await deps.confirm(
+  const reply = await deps.confirm(
     "guardian-angel",
     result.reason ?? "Tool call ini memerlukan persetujuan. Lanjutkan?",
   );
 
+  // Accept both the legacy boolean and the richer object form so adapters can
+  // report *why* they denied without every call site changing at once.
+  const approved = typeof reply === "boolean" ? reply : reply.approved;
+  const denialReason =
+    typeof reply === "boolean" ? "ditolak oleh user" : (reply.denialReason ?? "ditolak oleh user");
+
   if (!approved) {
-    const denied: GuardResult = { verdict: "block", reason: "ditolak oleh user", ruleId: scope.ruleId };
+    const denied: GuardResult = { verdict: "block", reason: denialReason, ruleId: scope.ruleId };
     deps.audit.append({
       ts: new Date(now).toISOString(),
       sessionId: deps.sessionId,
       tool: call.toolName,
       tier: "block",
-      reason: "ditolak oleh user",
+      reason: denialReason,
       scopeKey: scopeKey(scope),
       command,
     });

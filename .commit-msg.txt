@@ -1,21 +1,24 @@
-fix(classifier): stop blocking inert text in heredocs and single quotes
+fix(opencode): deny explicitly on dialog close, audit real denial cause
 
-Three parser gaps produced block verdicts for commands that never touch a
-protected path, making the guard unusable for ordinary work:
+Three defects made a confirmed command look like a user refusal:
 
-- Quoted heredoc bodies (<< 'EOF', << "EOF") were scanned as live shell, so
-  writing a test file whose contents mention a redirect or a destructive
-  command was blocked. neutralizeQuotedHeredoc now replaces the body with a
-  placeholder while keeping the delimiter, so the heredoc's own redirect
-  target still classifies. Unquoted delimiters expand, so those bodies stay
-  guarded.
-- Single-quoted arguments were scanned for expansion, so sed -n '/start/,$p'
-  (where $ means last line) and awk '{print $1}' tripped the dynamic-target
-  rule. maskSingleQuoted now neutralises only $ and backticks inside single
-  quotes, leaving quote characters intact so quote-split command words
-  (r'm', d'd'd) still normalise.
-- sed was treated as a write verb even without -i, blocking read-only
-  pipelines and even reads of the audit log. sed now only counts as a writer
-  with -i/--in-place.
+- tui.ts called dialog.replace(render) without the onClose callback, so
+  ESC or a backdrop click left the request unanswered. The server then
+  waited out the full 60s deadline and reported "ditolak oleh user",
+  blaming the user for a dialog they never dismissed on purpose.
+- Both confirm and cancel called api.ui.dialog.clear(), which can itself
+  fire onClose. A late close could race the allow response and flip it
+  to deny. Settling is now guarded by a one-shot flag so the first
+  decision wins.
+- guard.ts recorded every unapproved ask as "ditolak oleh user", hiding
+  timeouts and headless runs. GuardDeps.confirm now returns a
+  ConfirmResult carrying an optional denialReason; adapters report
+  "approval timeout" / "TUI tidak aktif" and the audit line reflects it.
+  Bare booleans still work, so existing adapters and tests are unchanged.
 
-14 new regression tests in test/false-positive.test.ts.
+Also verified the four false positives from commit 345fa9c still hold on
+HEAD: quoted heredocs, single-quoted $, read-only sed, and git commit
+messages containing $ or backticks all classify as allow, while an
+unquoted heredoc carrying rm -rf / still blocks.
+
+502 tests pass, tsc --noEmit clean.

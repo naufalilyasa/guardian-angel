@@ -291,5 +291,111 @@ describe("OpenCode Adapter", () => {
       for (const cb of disposeCallbacks) cb();
       expect(isTuiActive(ipcDir)).toBe(false);
     });
+
+    test("REGRESSION: closing the dialog without choosing (ESC/backdrop) denies instead of timing out", async () => {
+      let onCloseCb: (() => void) | null = null;
+      const disposeCallbacks: Array<() => void> = [];
+
+      const mockApi: any = {
+        ui: {
+          dialog: {
+            replace: (_render: () => any, onClose?: () => void) => {
+              onCloseCb = onClose ?? null;
+            },
+            clear: () => {},
+          },
+          DialogConfirm: (props: any) => ({ type: "confirm", props }),
+        },
+        lifecycle: {
+          onDispose: (cb: () => void) => {
+            disposeCallbacks.push(cb);
+          },
+        },
+      };
+
+      await GuardianAngelTui(mockApi, { ipcDir }, {} as any);
+
+      const req: IpcRequest = {
+        callID: "call-tui-escape",
+        sessionID: "ses-1",
+        tool: "bash",
+        command: "git push origin main",
+        reason: "push ke remote repository",
+        ruleId: "ask:git-push",
+        createdAt: Date.now(),
+        deadline: Date.now() + 5000,
+      };
+      writeRequest(req, ipcDir);
+
+      for (let i = 0; i < 20; i++) {
+        if (onCloseCb !== null) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      expect(onCloseCb).not.toBeNull();
+
+      // User hits ESC / clicks the backdrop: no explicit decision was made.
+      onCloseCb!();
+
+      const response = readResponse("call-tui-escape", ipcDir);
+      expect(response).not.toBeNull();
+      expect(response?.decision).toBe("deny");
+
+      for (const cb of disposeCallbacks) cb();
+    });
+
+    test("REGRESSION: a late close after confirm does not overwrite the allow response", async () => {
+      let dialogRendered: (() => any) | null = null;
+      let onCloseCb: (() => void) | null = null;
+      const disposeCallbacks: Array<() => void> = [];
+
+      const mockApi: any = {
+        ui: {
+          dialog: {
+            replace: (render: () => any, onClose?: () => void) => {
+              dialogRendered = render;
+              onCloseCb = onClose ?? null;
+            },
+            clear: () => {},
+          },
+          DialogConfirm: (props: any) => ({ type: "confirm", props }),
+        },
+        lifecycle: {
+          onDispose: (cb: () => void) => {
+            disposeCallbacks.push(cb);
+          },
+        },
+      };
+
+      await GuardianAngelTui(mockApi, { ipcDir }, {} as any);
+
+      const req: IpcRequest = {
+        callID: "call-tui-late-close",
+        sessionID: "ses-1",
+        tool: "bash",
+        command: "git push origin main",
+        reason: "push ke remote repository",
+        ruleId: "ask:git-push",
+        createdAt: Date.now(),
+        deadline: Date.now() + 5000,
+      };
+      writeRequest(req, ipcDir);
+
+      for (let i = 0; i < 20; i++) {
+        if (dialogRendered !== null) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(dialogRendered).not.toBeNull();
+
+      // Confirm first, then let our own dialog.clear() fire onClose.
+      dialogRendered!().props.onConfirm();
+      expect(onCloseCb).not.toBeNull();
+      onCloseCb!();
+
+      const response = readResponse("call-tui-late-close", ipcDir);
+      expect(response?.decision).toBe("allow");
+
+      for (const cb of disposeCallbacks) cb();
+    });
   });
 });

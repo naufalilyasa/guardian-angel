@@ -5,7 +5,13 @@ import { BUILTIN_RULES, loadPolicyFromFiles } from "../../core/policy.ts";
 import { createApprovalStore } from "../../core/approvals.ts";
 import { createAuditSink } from "../../core/audit.ts";
 import { ensureStore } from "../../core/store.ts";
-import type { GuardDeps, GuardResult, ToolCall } from "../../core/types.ts";
+import type {
+  ConfirmDenialReason,
+  ConfirmResult,
+  GuardDeps,
+  GuardResult,
+  ToolCall,
+} from "../../core/types.ts";
 import {
   cleanupCall,
   cleanupStale,
@@ -129,7 +135,7 @@ async function requestTuiApproval(
   cacheKey: string,
   timeoutMs: number,
   nowFn: () => number,
-): Promise<boolean> {
+): Promise<{ approved: boolean; denialReason?: ConfirmDenialReason }> {
   const deadline = nowFn() + timeoutMs;
   const req: IpcRequest = {
     callID: input.callID,
@@ -147,11 +153,15 @@ async function requestTuiApproval(
     const nonce = writeRequest(req, ipcDir);
     const response = await waitForResponse(input.callID, deadline, ipcDir, 150, nonce);
 
-    if (!response || response.decision !== "allow") {
+    if (!response) {
       recordDenial(cacheKey, 30_000, nowFn());
-      return false;
+      return { approved: false, denialReason: "approval timeout" };
     }
-    return true;
+    if (response.decision !== "allow") {
+      recordDenial(cacheKey, 30_000, nowFn());
+      return { approved: false, denialReason: "ditolak oleh user" };
+    }
+    return { approved: true };
   } finally {
     cleanupCall(input.callID, ipcDir);
   }
@@ -225,11 +235,11 @@ async function executeHookLogic(
     approvals: createApprovalStore({ workspace }),
     audit: createAuditSink(workspace),
     now: nowFn,
-    confirm: async (title: string, message: string): Promise<boolean> => {
+    confirm: async (title: string, message: string): Promise<ConfirmResult> => {
       lastAskReason = message;
       if (!isTuiActive(ipcDir)) {
         isHeadlessNoTui = true;
-        return false;
+        return { approved: false, denialReason: "TUI tidak aktif" };
       }
       return requestTuiApproval(
         ipcDir,

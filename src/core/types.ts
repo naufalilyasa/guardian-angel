@@ -60,10 +60,30 @@ export type AuditSink = {
   append(entry: Record<string, unknown>): void;
 };
 
+/**
+ * Why an `ask` verdict did not turn into an approval. Carried back from the
+ * adapter so the audit trail can distinguish a real user denial from a
+ * timeout, a headless run with no UI, or a transport failure. All of them are
+ * fail-closed, but conflating them hides operational problems behind a
+ * message that blames the user.
+ */
+export type ConfirmDenialReason =
+  | "ditolak oleh user"
+  | "approval timeout"
+  | "TUI tidak aktif"
+  | (string & {});
+
+/**
+ * Adapter reply to a confirmation request. A bare boolean stays supported so
+ * simple adapters and tests keep working; richer adapters return the object
+ * form to explain a denial.
+ */
+export type ConfirmResult = boolean | { approved: boolean; denialReason?: ConfirmDenialReason };
+
 export type GuardDeps = {
   workspace: string;
   sessionId: string;
-  confirm(title: string, message: string): Promise<boolean>;
+  confirm(title: string, message: string): Promise<ConfirmResult>;
   now(): number;
   policy: PolicyConfig;
   approvals: ApprovalStore;
