@@ -266,6 +266,43 @@ describe("policy integration", () => {
     expect(result.ruleId).toBe("block:protected-bash-write");
   });
 
+  test("REGRESSION: a global allow CANNOT override an interpreter store block (Atria-Dawn pentest)", async () => {
+    const { deps } = harness();
+    deps.policy = {
+      rules: [
+        { match: { tool: "bash", command: "*" }, tier: "allow", reason: "user override", source: "global" },
+      ],
+    };
+
+    const result = await guard(
+      bash(`python3 -c "open('.guardian-angel/audit.jsonl','w').write('[]')"`),
+      deps,
+    );
+
+    expect(result.verdict).toBe("block");
+    expect(result.ruleId).toBe("block:protected-interpreter");
+  });
+
+  test("REGRESSION: pentest base64 interpreter DB wipe is gated, never silent allow", async () => {
+    const { deps } = harness({ approve: false });
+    let confirmCalls = 0;
+    const realConfirm = deps.confirm;
+    deps.confirm = async (title: string, msg: string) => {
+      confirmCalls += 1;
+      return realConfirm(title, msg);
+    };
+
+    const result = await guard(
+      bash(
+        `python3 -c "import sqlite3,base64;c=sqlite3.connect('production.db');c.executescript(base64.b64decode('REVMRVRFIEZST00gdXNlcnM7').decode());c.commit()"`,
+      ),
+      deps,
+    );
+
+    expect(result.verdict).toBe("block");
+    expect(confirmCalls).toBe(1);
+  });
+
   test("a project rule cannot lower the builtin block end-to-end", async () => {
     const { deps } = harness();
     deps.policy = {

@@ -52,6 +52,108 @@ const RM_ALLOWED_FLAGS = new Set([
   "-f", "-r", "-rf", "-fr", "-R", "--force", "--recursive", "--",
 ]);
 
+/**
+ * Interpreters that execute a code payload passed inline on the command line.
+ * The guard cannot inspect such payload deterministically, so it must never
+ * allow it silently — the Atria-Dawn pentest wiped a database through a
+ * base64 `executescript` payload with verdict `allow` and zero confirmation.
+ * Flags are lowercase; program names are matched case-insensitively.
+ */
+const INTERPRETER_EVAL_FLAGS: Record<string, Set<string>> = {
+  node: new Set(["-e", "--eval", "-p", "--print", "-pe"]),
+  bun: new Set(["-e", "--eval", "-p", "--print"]),
+  perl: new Set(["-e", "-E"]),
+  ruby: new Set(["-e"]),
+  php: new Set(["-r", "-R"]),
+  lua: new Set(["-e"]),
+  rscript: new Set(["-e"]),
+  osascript: new Set(["-e"]),
+};
+
+const PYTHON_PROGRAM = /^python\d*(\.\d+)?$/;
+
+/** Mentions of the protected store inside inline interpreter code. */
+const PROTECTED_ENTRY_RE = /\.(?:guardian-angel|git)\b/;
+
+/** Catastrophic shell escape inside inline interpreter code (quote-tolerant). */
+const INTERPRETER_DESTRUCTIVE_RE =
+  /\brm\s+(?:-[a-zA-Z]*[rR][a-zA-Z]*\s+)*-[a-zA-Z]*f[a-zA-Z]*\s+\/(?:[\s;)|'"&]|$)/;
+
+/**
+ * Return the inline code payload when a segment invokes an interpreter with
+ * one (`python3 -c "..."`, `node -e '...'`, `deno eval '...'`), else null.
+ * Launchers are stripped first so `env python3 -c ...` is still detected.
+ */
+function inlineCodePayload(rawTokens: string[]): string | null {
+  const { tokens } = stripLaunchers(rawTokens);
+  if (tokens.length === 0) return null;
+
+  const program = stripQuotes(tokens[0].split("/").pop() ?? tokens[0])
+    .replace(/^[()]+|[()]+$/g, "")
+    .toLowerCase();
+  if (program === "deno") {
+    if (stripQuotes(tokens[1] ?? "") !== "eval") return null;
+    let i = 2;
+    while (i < tokens.length && stripQuotes(tokens[i]).startsWith("-")) i += 1;
+    const payload = tokens[i] !== undefined ? unquote(tokens[i]) : "";
+    return payload.length > 0 ? payload : null;
+  }
+
+  const isPython = PYTHON_PROGRAM.test(program);
+  const evalFlags = INTERPRETER_EVAL_FLAGS[program];
+  if (!isPython && !evalFlags) return null;
+
+  for (let i = 1; i < tokens.length; i += 1) {
+    const rawFlag = stripQuotes(tokens[i]).toLowerCase();
+    const eqIndex = rawFlag.indexOf("=");
+    const flagName = eqIndex > 0 ? rawFlag.slice(0, eqIndex) : rawFlag;
+    const isEvalFlag = isPython ? flagName === "-c" : evalFlags.has(flagName);
+    if (!isEvalFlag) continue;
+    if (eqIndex > 0) {
+      const payload = rawFlag.slice(eqIndex + 1);
+      return payload.length > 0 ? payload : null;
+    }
+    if (tokens[i + 1] === undefined) return null;
+    const payload = unquote(tokens[i + 1]);
+    return payload.length > 0 ? payload : null;
+  }
+  return null;
+}
+
+/**
+ * Inline interpreter code cannot be inspected: ask by default, and block when
+ * the payload names a protected entry — same tier as every other store-write
+ * rule (echo redirection, cp, sed -i, ...). Rule id keeps the `block:protected`
+ * prefix so global policy cannot downgrade it (see guard.ts).
+ */
+function classifyInterpreterCode(segments: string[]): GuardResult | null {
+  for (const segment of segments) {
+    const payload = inlineCodePayload(tokenize(segment));
+    if (payload === null) continue;
+    if (PROTECTED_ENTRY_RE.test(payload)) {
+      return {
+        verdict: "block",
+        reason: `kode interpreter menyentuh area yang dilindungi (${payload.slice(0, 60)})`,
+        ruleId: "block:protected-interpreter",
+      };
+    }
+    if (INTERPRETER_DESTRUCTIVE_RE.test(payload)) {
+      return {
+        verdict: "block",
+        reason: "kode interpreter menjalankan penghapusan root filesystem dan diblokir",
+        ruleId: "block:interpreter-destructive",
+      };
+    }
+    return {
+      verdict: "ask",
+      reason: "kode interpreter inline tidak dapat diperiksa; persetujuan diperlukan",
+      ruleId: "ask:interpreter-inline",
+    };
+  }
+  return null;
+}
+
+
 const RM_UNSAFE_CHARS = /[*?[\]$`(){}~]/;
 
 /** Shells that can carry a payload in `-c`. */
@@ -976,6 +1078,9 @@ function classifyCommand(
   const protectedWrite = classifyProtectedWrite(normalized, workspace, cwdMap);
   if (protectedWrite) return protectedWrite;
 
+  const interpreter = classifyInterpreterCode(segments);
+  if (interpreter?.verdict === "block") return interpreter;
+
   for (const { id, re, reason } of BLOCK_PATTERNS) {
     if (re.test(normalized)) return { verdict: "block", reason, ruleId: id };
   }
@@ -1041,6 +1146,9 @@ function classifyCommand(
       ruleId: `sql:${sql.verdict}`,
     };
     effective = effective ? stricter(effective, sqlAsk) : sqlAsk;
+  }
+  if (interpreter && interpreter.verdict === "ask") {
+    effective = effective ? stricter(effective, interpreter) : interpreter;
   }
 
   for (const { id, re, reason } of ASK_PATTERNS) {

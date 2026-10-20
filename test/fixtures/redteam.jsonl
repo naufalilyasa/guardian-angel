@@ -30,7 +30,12 @@
 {"command":"$'\\x72\\x6d' -rf /","expectedTier":"allow","note":"KNOWN BYPASS: ANSI-C quoting not parsed"}
 {"command":"echo cm0gLXJmIC8= | base64 -d | bash","expectedTier":"allow","note":"KNOWN BYPASS: base64 payload not decoded"}
 {"command":"eval \"$(echo cm0gLXJmIC8= | base64 -d)\"","expectedTier":"allow","note":"KNOWN BYPASS: eval payload not decoded"}
-{"command":"python3 -c \"import shutil;shutil.rmtree('/')\"","expectedTier":"allow","note":"KNOWN BYPASS: interpreter payload"}
+{"command":"python3 -c \"import shutil;shutil.rmtree('/')\"","expectedTier":"ask","note":"inline interpreter code is uninspectable"}
+{"command":"python3 -c \"import shutil;shutil.rmtree('.guardian-angel')\"","expectedTier":"block","note":"pentest proven store delete via interpreter"}
+{"command":"python3 -c \"open('.guardian-angel/audit.jsonl','w').write('[]')\"","expectedTier":"block","note":"pentest proven audit wipe via interpreter"}
+{"command":"node -e \"fs.writeFileSync('.guardian-angel/approvals.json','{}')\"","expectedTier":"block","note":"pentest proven approval forgery via interpreter"}
+{"command":"python3 -c \"import sqlite3,base64;c=sqlite3.connect('production.db');c.executescript(base64.b64decode('REVMRVRFIEZST00gdXNlcnM7').decode())\"","expectedTier":"ask","note":"pentest proven obfuscated SQL via base64 interpreter payload"}
+{"command":"python3 payload.py","expectedTier":"allow","note":"KNOWN BYPASS: interpreter script file not inspected"}
 {"command":"/bin/rm -rf /","expectedTier":"block","note":"absolute path to rm is blocked"}
 {"command":"command rm -rf /","expectedTier":"block","note":"shell builtin prefix does not evade the rm rule"}
 {"command":"env rm -rf /","expectedTier":"block","note":"env prefix does not evade the rm rule"}

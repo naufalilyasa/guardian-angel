@@ -196,7 +196,8 @@ Verifikasi lingkungan ext4 mount read-only terisolasi:
 ## Batasan POC (Known Residuals)
 
 Sesuai prinsip transparansi keamanan, batas kemampuan guard didokumentasikan secara terbuka di `test/fixtures/redteam.jsonl`:
-- **Bukan Sandbox OS**: Eksekusi runtime interpreter tingkat tinggi (`python3 -c "import os; os.remove(...)"`, `node -e "..."`) mengeksekusi payload di level runtime interpreter dan memerlukan isolasi container/OS user terpisah.
+- **Kode Interpreter Inline Kini Gated**: Hasil pentest Atria-Dawn membuktikan `python3 -c "..."` (termasuk payload base64 `executescript`) sempat lolos dengan verdict `allow` tanpa konfirmasi — melalui itu agent bisa menghapus store, audit, dan database. Kini payload interpreter inline (`python3 -c`, `node -e`, `bun -e`, `perl -e`, `ruby -e`, `php -r`, `deno eval`, dsb.) wajib `ask` (tidak dapat diperiksa secara deterministik), dan `block` bila payload menyentuh area terlindungi (`.guardian-angel`/`.git`) atau memuat pola destruktif root.
+- **File Skrip Interpreter**: `python3 payload.py`/`node script.js` tidak diperiksa isinya (berbeda dengan `-c`/`-e` inline) — tetap `allow` dan dicatat sebagai KNOWN BYPAS di corpus; butuh isolasi OS untuk penutupan penuh.
 - **Base64 Pipe ke Shell**: Perintah seperti `echo <base64> | base64 -d | sh` mengevaluasi string di runtime shell.
 - **SSH Remoting**: Perintah yang dieksekusi di remote host lewat `ssh user@host "rm -rf /"` berada di luar jangkauan hook lokal.
 - **Volume Tunggal Trash**: Mekanisme `ga trash` menggunakan `fs.renameSync` atomic O(1); jika target berada di filesystem/mount device berbeda (`EXDEV`), operasi ditolak secara fail-closed tanpa fallback copy+delete.
