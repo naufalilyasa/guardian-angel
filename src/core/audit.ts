@@ -7,6 +7,7 @@ export type AuditEntry = {
   sessionId: string;
   tool: string;
   tier: "allow" | "ask" | "block" | "rewrite" | "classifier_error";
+  ruleId?: string;
   reason?: string;
   scopeKey?: string;
   command?: string;

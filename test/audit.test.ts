@@ -138,6 +138,15 @@ describe("appendAudit", () => {
     expect(line).toContain("[REDACTED]");
     expect(line).not.toContain("hunter2");
   });
+  test("preserves ruleId when provided", () => {
+    const ws = workspace();
+    appendAudit(ws, {
+      ...baseEntry("ls"),
+      ruleId: "block:rm-root",
+    });
+    const parsed = JSON.parse(readLines(ws)[0]);
+    expect(parsed.ruleId).toBe("block:rm-root");
+  });
 });
 
 describe("createAuditSink", () => {

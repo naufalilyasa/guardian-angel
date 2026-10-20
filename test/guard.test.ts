@@ -53,6 +53,7 @@ describe("block", () => {
     expect(confirmCalls).toBe(0);
     expect(recorded).toHaveLength(1);
     expect(recorded[0].tier).toBe("block");
+    expect(recorded[0].ruleId).toBe("block:rm-root");
   });
 
   test("blocks DROP TABLE through the SQL classifier", async () => {
@@ -100,7 +101,9 @@ describe("ask", () => {
   test("ask records exactly one audit line when granted", async () => {
     const { deps, recorded } = harness({ approve: true });
     await guard(bash("sudo ls"), deps);
-    expect(recorded.filter((e) => e.tier === "ask")).toHaveLength(1);
+    const askLines = recorded.filter((e) => e.tier === "ask");
+    expect(askLines).toHaveLength(1);
+    expect(askLines[0].ruleId).toBe("ask:sudo");
   });
 
   test("REGRESSION: one approval does not unlock a different rule", async () => {
