@@ -159,7 +159,7 @@ async function requestTuiApproval(
     }
     if (response.decision !== "allow") {
       recordDenial(cacheKey, 30_000, nowFn());
-      return { approved: false, denialReason: "ditolak oleh user" };
+      return { approved: false, denialReason: "denied by the user" };
     }
     return { approved: true };
   } finally {
@@ -190,10 +190,10 @@ function handleGuardVerdict(
   if (result.verdict === "block") {
     if (isHeadlessNoTui) {
       throw new Error(
-        `[guardian-angel] ${lastAskReason ?? result.reason} (memerlukan persetujuan, tetapi TUI tidak aktif)`,
+        `[guardian-angel] ${lastAskReason ?? result.reason} (requires approval, but the TUI is not running)`,
       );
     }
-    throw new Error(`[guardian-angel] ${result.reason ?? "perintah diblokir"}`);
+    throw new Error(`[guardian-angel] ${result.reason ?? "perintah is blocked"}`);
   }
 
   if (result.replacement && input.tool === "bash" && output?.args) {
@@ -218,7 +218,7 @@ async function executeHookLogic(
 
   if (isRecentlyDenied(cacheKey, nowFn())) {
     throw new Error(
-      `[guardian-angel] perintah ini baru saja ditolak user (retry otomatis ditahan)`,
+      `[guardian-angel] this command was just denied by the user (automatic retry suppressed)`,
     );
   }
 
@@ -239,7 +239,7 @@ async function executeHookLogic(
       lastAskReason = message;
       if (!isTuiActive(ipcDir)) {
         isHeadlessNoTui = true;
-        return { approved: false, denialReason: "TUI tidak aktif" };
+        return { approved: false, denialReason: "TUI is not running" };
       }
       return requestTuiApproval(
         ipcDir,

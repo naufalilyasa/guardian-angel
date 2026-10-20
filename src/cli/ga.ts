@@ -8,15 +8,15 @@ import { createApprovalStore } from "../core/approvals.ts";
 const USAGE = `guardian-angel CLI
 
 Usage:
-  ga trash <path>        pindahkan file/folder ke trash
-  ga restore --last      pulihkan item terbaru
-  ga restore <id>        pulihkan item berdasarkan id
-  ga list                tampilkan isi trash
-  ga gc                  hapus item lebih tua dari 24 jam
-  ga status              ringkasan store
+  ga trash <path>        move a file or folder to the trash
+  ga restore --last      restore the most recent item
+  ga restore <id>        restore a specific item by id
+  ga list                list the contents of the trash
+  ga gc                  delete items older than 24 hours
+  ga status              print a store summary
 
 Global:
-  --workspace <path>     workspace root (default: $GA_WORKSPACE atau cwd)
+  --workspace <path>     workspace root (default: $GA_WORKSPACE or cwd)
 `;
 
 function fail(message: string): never {
@@ -31,7 +31,7 @@ function parseArgs(argv: string[]): { workspace: string; args: string[] } {
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--workspace") {
       const value = argv[i + 1];
-      if (!value) fail("--workspace memerlukan path");
+      if (!value) fail("--workspace requires a path");
       workspace = value;
       i += 1;
       continue;
@@ -53,13 +53,13 @@ function parseArgs(argv: string[]): { workspace: string; args: string[] } {
 
 function cmdTrash(workspace: string, args: string[]): void {
   const target = args[0];
-  if (!target) fail("ga trash memerlukan <path>");
+  if (!target) fail("ga trash requires <path>");
   const resolved = resolve(workspace, target);
   let physicalTarget = resolved;
   try {
     physicalTarget = realpathSync(resolved);
   } catch {}
-  if (!existsSync(resolved) && !existsSync(physicalTarget)) fail(`tidak ditemukan: ${target}`);
+  if (!existsSync(resolved) && !existsSync(physicalTarget)) fail(`not found: ${target}`);
 
   const id = safeDelete(workspace, target);
   process.stdout.write(`${id}\n`);
@@ -67,23 +67,23 @@ function cmdTrash(workspace: string, args: string[]): void {
 
 function cmdRestore(workspace: string, args: string[]): void {
   const arg = args[0];
-  if (!arg) fail("ga restore memerlukan <id> atau --last");
+  if (!arg) fail("ga restore requires <id> or --last");
 
   let id = arg;
   if (arg === "--last") {
     const [latest] = listTrash(workspace);
-    if (!latest) fail("trash kosong");
+    if (!latest) fail("trash is empty");
     id = latest.id;
   }
 
   const restored = restore(workspace, id);
-  process.stdout.write(`dipulihkan: ${restored}\n`);
+  process.stdout.write(`restored: ${restored}\n`);
 }
 
 function cmdList(workspace: string): void {
   const entries = listTrash(workspace);
   if (entries.length === 0) {
-    process.stdout.write("trash kosong\n");
+    process.stdout.write("trash is empty\n");
     return;
   }
   for (const entry of entries) {
@@ -93,7 +93,7 @@ function cmdList(workspace: string): void {
 
 function cmdGc(workspace: string): void {
   const removed = gc(workspace);
-  process.stdout.write(`dihapus: ${removed}\n`);
+  process.stdout.write(`removed: ${removed}\n`);
 }
 
 function cmdStatus(workspace: string): void {
@@ -102,8 +102,8 @@ function cmdStatus(workspace: string): void {
   const trashCount = listTrash(workspace).length;
 
   process.stdout.write(`workspace: ${workspace}\n`);
-  process.stdout.write(`trash: ${trashCount} item\n`);
-  process.stdout.write(`approvals: ${approvals.list(Date.now()).length} aktif\n`);
+  process.stdout.write(`trash: ${trashCount} item(s)\n`);
+  process.stdout.write(`approvals: ${approvals.list(Date.now()).length} active\n`);
   process.stdout.write(`audit: ${auditFile(workspace)}\n`);
   process.stdout.write(`ttl: ${TRASH_TTL_MS} ms\n`);
 }
@@ -119,7 +119,7 @@ function main(): void {
   }
 
   if (!existsSync(workspace) || !statSync(workspace).isDirectory()) {
-    fail(`workspace tidak valid: ${workspace}`);
+    fail(`invalid workspace: ${workspace}`);
   }
 
   switch (command) {
@@ -139,7 +139,7 @@ function main(): void {
       cmdStatus(workspace);
       break;
     default:
-      fail(`perintah tidak dikenal: ${command}\n\n${USAGE}`);
+      fail(`unknown command: ${command}\n\n${USAGE}`);
   }
 }
 

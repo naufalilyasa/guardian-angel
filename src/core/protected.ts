@@ -33,5 +33,5 @@ export function isProtectedPath(workspace: string, candidate: string): boolean {
 }
 
 export function protectedReason(candidate: string): string {
-  return `${candidate} berada di area yang dilindungi guardian-angel; perubahan ditolak`;
+  return `${candidate} is inside a guardian-angel protected area; changes are rejected`;
 }

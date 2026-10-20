@@ -403,9 +403,9 @@ describe("policy integration", () => {
     );
 
     expect(result.verdict).toBe("block");
-    expect(result.reason).toContain("ditolak oleh user");
+    expect(result.reason).toContain("denied by the user");
     expect(result.ruleId).toBe("ask:write-outside");
     expect(recorded[0].tier).toBe("block");
-    expect(recorded[0].reason).toBe("ditolak oleh user");
+    expect(recorded[0].reason).toBe("denied by the user");
   });
 });

@@ -243,11 +243,11 @@ describe("20-Case Destructive Smoke Test (OpenCode Adapter)", () => {
       if (c.expectedOutcome === "throw-block") {
         expect(threw).toBe(true);
         expect(errorMessage).toContain("[guardian-angel]");
-        expect(errorMessage).not.toContain("memerlukan persetujuan");
+        expect(errorMessage).not.toContain("requires approval");
       } else if (c.expectedOutcome === "throw-ask") {
         expect(threw).toBe(true);
         expect(errorMessage).toContain("[guardian-angel]");
-        expect(errorMessage).toContain("memerlukan persetujuan");
+        expect(errorMessage).toContain("requires approval");
       } else if (c.expectedOutcome === "rewrite-trash") {
         expect(threw).toBe(false);
         expect(output.args.command).toContain("ga.ts");

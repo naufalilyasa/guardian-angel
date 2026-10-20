@@ -68,9 +68,9 @@ export type AuditSink = {
  * message that blames the user.
  */
 export type ConfirmDenialReason =
-  | "ditolak oleh user"
+  | "denied by the user"
   | "approval timeout"
-  | "TUI tidak aktif"
+  | "TUI is not running"
   | (string & {});
 
 /**

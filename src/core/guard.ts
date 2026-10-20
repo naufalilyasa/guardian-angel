@@ -170,7 +170,7 @@ function handleCachedApproval(
     tool: call.toolName,
     tier: "ask",
     ruleId: scope.ruleId,
-    reason: `approval sudah ada untuk Scope ini: ${result.reason ?? "ask"}`,
+    reason: `approval already exists for this scope: ${result.reason ?? "ask"}`,
     scopeKey: scopeKey(scope),
     command,
   });
@@ -193,14 +193,14 @@ async function promptAndRecordApproval(
 ): Promise<GuardResult> {
   const reply = await deps.confirm(
     "guardian-angel",
-    result.reason ?? "Tool call ini memerlukan persetujuan. Lanjutkan?",
+    result.reason ?? "This tool call requires approval. Continue?",
   );
 
   // Accept both the legacy boolean and the richer object form so adapters can
   // report *why* they denied without every call site changing at once.
   const approved = typeof reply === "boolean" ? reply : reply.approved;
   const denialReason =
-    typeof reply === "boolean" ? "ditolak oleh user" : (reply.denialReason ?? "ditolak oleh user");
+    typeof reply === "boolean" ? "denied by the user" : (reply.denialReason ?? "denied by the user");
 
   if (!approved) {
     const denied: GuardResult = { verdict: "block", reason: denialReason, ruleId: scope.ruleId };

@@ -9,6 +9,7 @@ import {
   writeResponse,
 } from "./ipc.ts";
 import type { IpcRequest } from "./types.ts";
+import { describeGuardRequest, guardChoices, renderGuardBody } from "./permission-view.ts";
 
 export function getActiveSessionId(api: Partial<TuiPluginApi>): string | undefined {
   const current = api.route?.current;
@@ -87,30 +88,25 @@ export const GuardianAngelTui: TuiPlugin = async (
     };
 
     try {
-      const details = req.command ?? req.path ?? "(tidak ada teks tambahan)";
+      const view = describeGuardRequest(req);
+      const choices = guardChoices();
+
       api.ui.dialog.replace(
         () => {
-          // Prefer native DialogSelect with explicit "Allow" and "Deny" options
-          // matching OpenCode native permission dialog style (instead of generic
-          // Confirm/Cancel buttons).
+          // Mirror OpenCode's native `question` tool: a short header, the full
+          // question as the prompt, and choices that each carry a description.
+          // DialogSelect is the closest public primitive — it renders an option
+          // list with per-choice descriptions, exactly like the question tool.
           if (typeof api.ui.DialogSelect === "function") {
             return api.ui.DialogSelect({
-              title: `△ Permission required: ${req.ruleId}`,
-              placeholder: `${req.reason} — [${req.tool}]: ${details}`,
-              options: [
-                {
-                  title: "Allow",
-                  value: "allow",
-                  description: `Izinkan eksekusi [${req.tool}] (diingat 24 jam)`,
-                  onSelect: () => settle("allow"),
-                },
-                {
-                  title: "Deny",
-                  value: "deny",
-                  description: "Tolak perintah ini (fail-closed, ESC)",
-                  onSelect: () => settle("deny"),
-                },
-              ],
+              title: view.header,
+              placeholder: `${view.toolLabel}: ${view.detail}`,
+              options: choices.map((choice) => ({
+                title: choice.label,
+                value: choice.value,
+                description: choice.description,
+                onSelect: () => settle(choice.value),
+              })),
               onSelect: (opt) => {
                 const val = (opt as { value?: string })?.value;
                 settle(val === "allow" ? "allow" : "deny");
@@ -118,8 +114,8 @@ export const GuardianAngelTui: TuiPlugin = async (
             });
           }
           return api.ui.DialogConfirm({
-            title: `guardian-angel: ${req.ruleId}`,
-            message: `${req.reason}\n\n[${req.tool}]: ${details}`,
+            title: view.header,
+            message: renderGuardBody(view),
             onConfirm: () => settle("allow"),
             onCancel: () => settle("deny"),
           });

@@ -20,32 +20,32 @@ export type ClassifierInput = {
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 
 const BLOCK_PATTERNS: Array<{ id: string; re: RegExp; reason: string }> = [
-  { id: "block:rm-root", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?rm\s+(-[a-zA-Z]*[rR][a-zA-Z]*\s+)*-[a-zA-Z]*f[a-zA-Z]*\s+\/([\s;)|]|$)/, reason: "rm -rf pada root filesystem diblokir" },
-  { id: "block:rm-home", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?rm\s+(-[a-zA-Z]+\s+)*~([\s;)|]|$)/, reason: "rm pada home directory diblokir" },
-  { id: "block:rm-home-env", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?rm\s+(-[a-zA-Z]+\s+)*\$HOME([\s;)|]|$)/, reason: "rm pada $HOME diblokir" },
+  { id: "block:rm-root", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?rm\s+(-[a-zA-Z]*[rR][a-zA-Z]*\s+)*-[a-zA-Z]*f[a-zA-Z]*\s+\/([\s;)|]|$)/, reason: "rm -rf on the root filesystem is blocked" },
+  { id: "block:rm-home", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?rm\s+(-[a-zA-Z]+\s+)*~([\s;)|]|$)/, reason: "rm on the home directory is blocked" },
+  { id: "block:rm-home-env", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?rm\s+(-[a-zA-Z]+\s+)*\$HOME([\s;)|]|$)/, reason: "rm on $HOME is blocked" },
     {
     id: "block:protected-bash-write",
     re: /(^|[\s;&|('"`])env\s+[^\n]*?(-C|--chdir[=\s])\s*['"]?\.?(guardian-angel|git)\b/,
-    reason: "eksekusi perintah di dalam direktori proteksi (.guardian-angel atau .git) diblokir",
+    reason: "executing inside a protected directory (.guardian-angel or .git) is blocked",
   },
   {
-    id: "block:protected-rm", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?(rm|unlink|shred)\b[^\n]*\.(guardian-angel|git)\b/, reason: "penghapusan direktori proteksi (.guardian-angel atau .git) diblokir" },
-  { id: "block:git-clean-ignored", re: /(^|[\s;|&(])git\s+clean\b[^\n]*\s-[^\n]*[xX]/, reason: "git clean dengan flag -x/-X menghapus ignored files termasuk store dan diblokir" },
-  { id: "block:mkfs", re: /(^|[\s;|&(])mkfs(\.[a-z0-9]+)?([\s;)|]|$)/, reason: "mkfs memformat filesystem dan diblokir" },
-  { id: "block:dd-device", re: /\bdd\b[^\n]*\bof=\/dev\//, reason: "dd menulis langsung ke block device dan diblokir" },
-  { id: "block:fork-bomb", re: /:\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:/, reason: "fork bomb diblokir" },
-  { id: "block:network-pipe", re: /\b(curl|wget)\b[^\n]*\|\s*(sh|bash|zsh|dash|ksh)\b/, reason: "pipe dari network ke shell diblokir" },
+    id: "block:protected-rm", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?(rm|unlink|shred)\b[^\n]*\.(guardian-angel|git)\b/, reason: "deleting a protected directory (.guardian-angel or .git) is blocked" },
+  { id: "block:git-clean-ignored", re: /(^|[\s;|&(])git\s+clean\b[^\n]*\s-[^\n]*[xX]/, reason: "git clean dengan flag -x/-X menghapus ignored files termasuk store dan is blocked" },
+  { id: "block:mkfs", re: /(^|[\s;|&(])mkfs(\.[a-z0-9]+)?([\s;)|]|$)/, reason: "mkfs formats a filesystem and is blocked" },
+  { id: "block:dd-device", re: /\bdd\b[^\n]*\bof=\/dev\//, reason: "dd writes directly to a block device and is blocked" },
+  { id: "block:fork-bomb", re: /:\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:/, reason: "fork bomb is blocked" },
+  { id: "block:network-pipe", re: /\b(curl|wget)\b[^\n]*\|\s*(sh|bash|zsh|dash|ksh)\b/, reason: "piping from the network into a shell is blocked" },
   { id: "block:find-delete", re: /\bfind\b[^\n]*\s-delete\b/, reason: "find -delete menghapus banyak target tanpa bisa di-undo" },
-  { id: "block:shred", re: /(^|[\s;|&(])shred([\s;)|]|$)/, reason: "shred menghapus data secara permanen dan diblokir" },
+  { id: "block:shred", re: /(^|[\s;|&(])shred([\s;)|]|$)/, reason: "shred erases data permanently and is blocked" },
 ];
 
 const ASK_PATTERNS: Array<{ id: string; re: RegExp; reason: string }> = [
-  { id: "ask:sudo", re: /(^|[\s;|&(])sudo([\s;)|]|$)/, reason: "sudo memerlukan persetujuan" },
-  { id: "ask:git-push", re: /(^|[\s;|&(])git\s+push\b/, reason: "git push memerlukan persetujuan" },
-  { id: "ask:git-clean", re: /(^|[\s;|&(])git\s+clean\b/, reason: "git clean menghapus file yang tidak terlacak dan memerlukan persetujuan" },
-  { id: "ask:chmod-recursive", re: /(^|[\s;|&(])ch(mod|own)\s+-R\b/, reason: "perubahan permission rekursif memerlukan persetujuan" },
-  { id: "ask:kill-all", re: /(^|[\s;|&(])kill\s+-9\s+-1([\s;)|]|$)/, reason: "membunuh semua proses memerlukan persetujuan" },
-  { id: "ask:docker-prune", re: /(^|[\s;|&(])docker\s+system\s+prune\b/, reason: "docker system prune memerlukan persetujuan" },
+  { id: "ask:sudo", re: /(^|[\s;|&(])sudo([\s;)|]|$)/, reason: "sudo requires approval" },
+  { id: "ask:git-push", re: /(^|[\s;|&(])git\s+push\b/, reason: "git push requires approval" },
+  { id: "ask:git-clean", re: /(^|[\s;|&(])git\s+clean\b/, reason: "git clean removes untracked files and requires approval" },
+  { id: "ask:chmod-recursive", re: /(^|[\s;|&(])ch(mod|own)\s+-R\b/, reason: "recursive permission changes require approval" },
+  { id: "ask:kill-all", re: /(^|[\s;|&(])kill\s+-9\s+-1([\s;)|]|$)/, reason: "killing all processes requires approval" },
+  { id: "ask:docker-prune", re: /(^|[\s;|&(])docker\s+system\s+prune\b/, reason: "docker system prune requires approval" },
 ];
 
 const RM_ALLOWED_FLAGS = new Set([
@@ -133,20 +133,20 @@ function classifyInterpreterCode(segments: string[]): GuardResult | null {
     if (PROTECTED_ENTRY_RE.test(payload)) {
       return {
         verdict: "block",
-        reason: `kode interpreter menyentuh area yang dilindungi (${payload.slice(0, 60)})`,
+        reason: `interpreter code touches a protected area (${payload.slice(0, 60)})`,
         ruleId: "block:protected-interpreter",
       };
     }
     if (INTERPRETER_DESTRUCTIVE_RE.test(payload)) {
       return {
         verdict: "block",
-        reason: "kode interpreter menjalankan penghapusan root filesystem dan diblokir",
+        reason: "interpreter code performs a root filesystem wipe and is blocked",
         ruleId: "block:interpreter-destructive",
       };
     }
     return {
       verdict: "ask",
-      reason: "kode interpreter inline tidak dapat diperiksa; persetujuan diperlukan",
+      reason: "inline interpreter code cannot be inspected; approval required",
       ruleId: "ask:interpreter-inline",
     };
   }
@@ -629,14 +629,14 @@ function checkDelegatedRm(rawTokens: string[], program: string): GuardResult | n
     if (verb === "rm" || verb === "unlink" || verb === "shred") {
       return {
         verdict: "block",
-        reason: "find -exec rm tidak dapat di-undo otomatis; jalankan ga trash <path> per target",
+        reason: "find -exec rm cannot be undone automatically; run ga trash <path> per target",
         ruleId: "block:rm-find-exec",
       };
     }
     if (SHELLS.has(verb)) {
       return {
         verdict: "ask",
-        reason: "find -exec menjalankan shell memerlukan persetujuan",
+        reason: "find -exec spawning a shell requires approval",
         ruleId: "ask:find-exec-shell",
       };
     }
@@ -651,7 +651,7 @@ function checkDelegatedRm(rawTokens: string[], program: string): GuardResult | n
     if (hasRm) {
       return {
         verdict: "block",
-        reason: "xargs rm mengambil target dari stdin dan tidak dapat diverifikasi; jalankan ga trash <path> per target",
+        reason: "xargs rm takes targets from stdin and cannot be verified; run ga trash <path> per target",
         ruleId: "block:rm-xargs",
       };
     }
@@ -675,7 +675,7 @@ function parseRmOperands(tokens: string[]): { operands: string[]; error?: GuardR
           operands: [],
           error: {
             verdict: "block",
-            reason: `rm dengan flag tidak dikenal (${rawToken}); gunakan ga trash <path> per target`,
+            reason: `rm with an unknown flag (${rawToken}); gunakan ga trash <path> per target`,
             ruleId: "block:rm-unknown-flag",
           },
         };
@@ -693,7 +693,7 @@ function classifySingleRmOperand(rawOperand: string, workspace: string): GuardRe
   if (stripped === "~" || stripped.startsWith("~/")) {
     return {
       verdict: "block",
-      reason: "penghapusan home (rm -rf ~) diblokir",
+      reason: "home directory removal (rm -rf ~) is blocked",
       ruleId: "block:rm-home",
     };
   }
@@ -701,7 +701,7 @@ function classifySingleRmOperand(rawOperand: string, workspace: string): GuardRe
   if (RM_UNSAFE_CHARS.test(stripped)) {
     return {
       verdict: "block",
-      reason: `rm target kompleks (${rawOperand}) tidak dapat di-parse dengan aman; jalankan ga trash <path> per target`,
+      reason: `rm with a complex target (${rawOperand}) cannot be parsed safely; run ga trash <path> per target`,
       ruleId: "block:rm-complex-target",
     };
   }
@@ -711,7 +711,7 @@ function classifySingleRmOperand(rawOperand: string, workspace: string): GuardRe
   if (target === "/" || stripped === "/") {
     return {
       verdict: "block",
-      reason: "penghapusan root (rm -rf /) diblokir",
+      reason: "root filesystem removal (rm -rf /) is blocked",
       ruleId: "block:rm-root",
     };
   }
@@ -719,7 +719,7 @@ function classifySingleRmOperand(rawOperand: string, workspace: string): GuardRe
   if (target === homedir()) {
     return {
       verdict: "block",
-      reason: "penghapusan home (rm -rf ~) diblokir",
+      reason: "home directory removal (rm -rf ~) is blocked",
       ruleId: "block:rm-home",
     };
   }
@@ -728,7 +728,7 @@ function classifySingleRmOperand(rawOperand: string, workspace: string): GuardRe
   if (!inside) {
     return {
       verdict: "block",
-      reason: `trash hanya mencakup workspace; ${target} berada di luar workspace`,
+      reason: `trash only covers the workspace; ${target} is outside the workspace`,
       ruleId: "block:rm-outside",
     };
   }
@@ -775,7 +775,7 @@ function classifyRm(segment: string, workspace: string): GuardResult | null {
   if (error) return error;
 
   if (operands.length === 0) {
-    return { verdict: "ask", reason: "rm tanpa operand memerlukan persetujuan", ruleId: "ask:rm-no-operand" };
+    return { verdict: "ask", reason: "rm tanpa operand requires approval", ruleId: "ask:rm-no-operand" };
   }
   if (operands.length > 1) {
     return {
@@ -938,7 +938,7 @@ function classifyProtectedWrite(
       if (!raw.quoted && /[$`<>()]/.test(raw.target)) {
         return {
           verdict: "block",
-          reason: `pengalihan ke target dinamis (${raw.target}) berisiko merusak store dan diblokir`,
+          reason: `redirect to a dynamic target (${raw.target}) could corrupt the store and is blocked`,
           ruleId: "block:dynamic-redirect",
         };
       }
@@ -1001,7 +1001,7 @@ function classifyProtectedWrite(
       if (/[$`]/.test(token)) {
         return {
           verdict: "block",
-          reason: `argumen penulisan dinamis (${token}) berisiko merusak store dan diblokir`,
+          reason: `dynamic write argument (${token}) could corrupt the store and is blocked`,
           ruleId: "block:dynamic-write-verb",
         };
       }
@@ -1129,7 +1129,7 @@ function checkTargetOverwrite(
   if (!quoted && /[$`<>()]/.test(clean)) {
     return {
       verdict: "ask",
-      reason: `menulis ke target dinamis: ${clean}`,
+      reason: `writing to a dynamic target: ${clean}`,
       ruleId: "ask:dynamic-write",
     };
   }
@@ -1139,7 +1139,7 @@ function checkTargetOverwrite(
   if (!isInsideWorkspace(workspace, target) || !isInsideWorkspacePhysical(workspace, clean)) {
     return {
       verdict: "ask",
-      reason: `menulis di luar workspace: ${target}`,
+      reason: `writing outside the workspace: ${target}`,
       ruleId: "ask:write-outside",
     };
   }
@@ -1176,7 +1176,7 @@ function checkTargetOverwrite(
   if (exists) {
     return {
       verdict: "ask",
-      reason: `menimpa file yang sudah ada: ${effective}`,
+      reason: `overwriting an existing file: ${effective}`,
       ruleId: "ask:overwrite",
     };
   }
@@ -1327,7 +1327,7 @@ function trackEffectiveCwd(
           cwdMap,
           error: {
             verdict: "ask",
-            reason: "berpindah ke direktori dinamis memerlukan persetujuan",
+            reason: "berpindah ke direktori dinamis requires approval",
             ruleId: "ask:cd-dynamic",
           },
         };
@@ -1398,7 +1398,7 @@ function classifyCommand(
   if (sql && sql.verdict === "block") {
     return {
       verdict: "block",
-      reason: sql.reason ?? "perintah SQL diblokir",
+      reason: sql.reason ?? "perintah SQL is blocked",
       ruleId: `sql:${sql.verdict}`,
     };
   }
@@ -1423,7 +1423,7 @@ function classifyCommand(
         if (/^\$([A-Za-z_0-9@*#?]|{[^}]+}|\()|^`/.test(cleanHead)) {
           return {
             verdict: "ask",
-            reason: `eksekusi perintah melalui variabel atau substitusi (${tokens[0]}) memerlukan persetujuan`,
+            reason: `executing a command through a variable or substitution (${tokens[0]}) requires approval`,
             ruleId: "ask:variable-command",
           };
         }
@@ -1451,7 +1451,7 @@ function classifyCommand(
   if (sql && sql.verdict === "ask") {
     const sqlAsk: GuardResult = {
       verdict: "ask",
-      reason: sql.reason ?? "perintah SQL memerlukan persetujuan",
+      reason: sql.reason ?? "perintah SQL requires approval",
       ruleId: `sql:${sql.verdict}`,
     };
     effective = effective ? stricter(effective, sqlAsk) : sqlAsk;
@@ -1482,7 +1482,7 @@ function classifyWriteTool(call: ToolCall, workspace: string): GuardResult {
   if (!rawPath) {
     return {
       verdict: "ask",
-      reason: "path tidak diketahui; persetujuan diperlukan",
+      reason: "unknown path; approval required",
       ruleId: "ask:unknown-path",
     };
   }
@@ -1505,7 +1505,7 @@ function classifyWriteTool(call: ToolCall, workspace: string): GuardResult {
   if (!isInsideWorkspacePhysical(workspace, rawPath)) {
     return {
       verdict: "ask",
-      reason: `menulis di luar workspace: ${resolvePhysical(workspace, rawPath)}`,
+      reason: `writing outside the workspace: ${resolvePhysical(workspace, rawPath)}`,
       ruleId: "ask:write-outside",
     };
   }
@@ -1515,7 +1515,7 @@ function classifyWriteTool(call: ToolCall, workspace: string): GuardResult {
   // workspace spelled `/private/var/...` (what the harness reports) together
   // with a file path spelled `/var/...` (what the tool args carry) on macOS,
   // where `/var` is a symlink to `/private/var`.
-  return { verdict: "allow", reason: "menulis di dalam workspace", ruleId: "allow:write-inside" };
+  return { verdict: "allow", reason: "writing inside the workspace", ruleId: "allow:write-inside" };
 }
 
 /**

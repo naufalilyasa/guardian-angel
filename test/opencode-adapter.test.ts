@@ -144,7 +144,7 @@ describe("OpenCode Adapter", () => {
       const output = { args: { command: "git push origin main" } };
       expect(
         handler({ tool: "bash", sessionID: "s1", callID: "c1" }, output),
-      ).rejects.toThrow(/TUI tidak aktif/);
+      ).rejects.toThrow(/TUI is not running/);
     });
 
     test("active TUI approves ask-tier command via IPC and caches approval", async () => {
@@ -192,12 +192,12 @@ describe("OpenCode Adapter", () => {
       const output = { args: { command: "docker system prune -af" } };
       await expect(
         handler({ tool: "bash", sessionID: "s1", callID: "c-deny-1" }, output),
-      ).rejects.toThrow(/ditolak/);
+      ).rejects.toThrow(/denied/);
 
       // Immediate retry by agent should hit denial cache and fail immediately
       await expect(
         handler({ tool: "bash", sessionID: "s1", callID: "c-retry-1" }, output),
-      ).rejects.toThrow(/retry otomatis ditahan/);
+      ).rejects.toThrow(/automatic retry suppressed/);
     });
 
     test("overwrite of existing file in workspace triggers ask", async () => {
@@ -214,7 +214,7 @@ describe("OpenCode Adapter", () => {
       const output = { args: { command: "echo 'new' > existing.txt" } };
       await expect(
         handler({ tool: "bash", sessionID: "s1", callID: "c-over-1" }, output),
-      ).rejects.toThrow(/menimpa file/);
+      ).rejects.toThrow(/overwriting an existing file/);
     });
   });
 
@@ -274,7 +274,7 @@ describe("OpenCode Adapter", () => {
       // Execute rendered dialog confirm
       const component = dialogRendered!();
       expect(component.type).toBe("confirm");
-      expect(component.props.title).toContain("ask:git-push");
+      expect(component.props.title).toContain("Guardian Angel: git-push");
       expect(component.props.message).toContain("push ke remote repository");
 
       // User clicks confirm
@@ -444,8 +444,8 @@ describe("OpenCode Adapter", () => {
       expect(dialogRendered).not.toBeNull();
       const component = dialogRendered!();
       expect(component.type).toBe("select");
-      expect(component.props.title).toContain("Permission required: ask:rm-outside");
-      expect(component.props.options.map((o: any) => o.title)).toEqual(["Allow", "Deny"]);
+      expect(component.props.title).toContain("Guardian Angel: rm-outside");
+      expect(component.props.options.map((o: any) => o.title)).toEqual(["Deny", "Allow"]);
 
       // Selecting allow option
       const allowOpt = component.props.options.find((o: any) => o.value === "allow");

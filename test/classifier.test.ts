@@ -97,7 +97,7 @@ describe("rm rewrite", () => {
   test("blocks a target outside the workspace", () => {
     const result = verdictOf("rm /etc/hosts");
     expect(result.verdict).toBe("block");
-    expect(result.reason).toContain("trash hanya mencakup workspace");
+    expect(result.reason).toContain("trash only covers the workspace");
   });
 
   test("blocks the workspace root itself", () => {

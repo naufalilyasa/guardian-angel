@@ -88,7 +88,7 @@ describe("stdin and files", () => {
   test("asks when SQL comes from a file redirect", () => {
     const result = classifySql("mysql < dump.sql");
     expect(result?.verdict).toBe("ask");
-    expect(result?.reason).toBe("SQL dari file tidak dapat diperiksa");
+    expect(result?.reason).toBe("SQL from a file cannot be inspected");
   });
 
   test("asks for -f file", () => {
@@ -115,12 +115,12 @@ describe("statement classification", () => {
 
   test("marks DELETE without WHERE", () => {
     const result = classifySql('mysql -e "DELETE FROM users"');
-    expect(result?.reason).toContain("tanpa WHERE");
+    expect(result?.reason).toContain("without WHERE");
   });
 
   test("does not mark DELETE with WHERE", () => {
     const result = classifySql('mysql -e "DELETE FROM users WHERE id = 1"');
-    expect(result?.reason).not.toContain("tanpa WHERE");
+    expect(result?.reason).not.toContain("without WHERE");
   });
 
   test("multi-statement takes the most severe", () => {
@@ -152,7 +152,7 @@ describe("REGRESSION: every payload is classified, not just the first", () => {
   test("two benign payloads still ask rather than allow", () => {
     const result = classifySql('mysql -e "SELECT 1" -e "SELECT 2"');
     expect(result?.verdict).toBe("ask");
-    expect(result?.reason).toContain("beberapa payload");
+    expect(result?.reason).toContain("multiple SQL payloads");
   });
 
   test("a single payload is unaffected", () => {

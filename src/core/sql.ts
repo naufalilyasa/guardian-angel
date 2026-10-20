@@ -44,19 +44,19 @@ function hasWhereClause(sql: string): boolean {
 function classifyStatement(sql: string): SqlVerdict {
   const keyword = firstKeyword(sql);
   if (keyword === null) {
-    return { verdict: "ask", reason: "query tidak dapat diparse" };
+    return { verdict: "ask", reason: "query could not be parsed" };
   }
   if (ALLOW_KEYWORDS.has(keyword)) {
     return { verdict: "allow", reason: `${keyword} read-only` };
   }
   if (BLOCK_KEYWORDS.has(keyword)) {
-    return { verdict: "block", reason: `${keyword} diblokir` };
+    return { verdict: "block", reason: `${keyword} is blocked` };
   }
   if (ASK_KEYWORDS.has(keyword)) {
     if (!hasWhereClause(sql)) {
-      return { verdict: "ask", reason: `${keyword} tanpa WHERE memerlukan persetujuan` };
+      return { verdict: "ask", reason: `${keyword} without WHERE requires approval` };
     }
-    return { verdict: "ask", reason: `${keyword} memerlukan persetujuan` };
+    return { verdict: "ask", reason: `${keyword} requires approval` };
   }
   if (OTHER_KEYWORDS.has(keyword)) {
     return { verdict: "ask", reason: "unclassified SQL" };
@@ -71,7 +71,7 @@ function classifyPayload(sql: string): SqlVerdict {
     .filter((part) => part.length > 0);
 
   if (statements.length === 0) {
-    return { verdict: "ask", reason: "query tidak dapat diparse" };
+    return { verdict: "ask", reason: "query could not be parsed" };
   }
 
   let worst: SqlVerdict | null = null;
@@ -81,7 +81,7 @@ function classifyPayload(sql: string): SqlVerdict {
       worst = result;
     }
   }
-  return worst ?? { verdict: "ask", reason: "query tidak dapat diparse" };
+  return worst ?? { verdict: "ask", reason: "query could not be parsed" };
 }
 
 function unquote(token: string): string {
@@ -221,10 +221,10 @@ function payloadFromArgs(client: string, args: string[]): Payloads {
 /** Classify every payload and return the most severe verdict. */
 function classifyAll(payloads: Payloads): SqlVerdict {
   if (payloads.fromFile) {
-    return { verdict: "ask", reason: "SQL dari file tidak dapat diperiksa" };
+    return { verdict: "ask", reason: "SQL from a file cannot be inspected" };
   }
   if (payloads.sql.length === 0) {
-    return { verdict: "ask", reason: "query tidak dapat diparse" };
+    return { verdict: "ask", reason: "query could not be parsed" };
   }
 
   let worst: SqlVerdict | null = null;
@@ -236,13 +236,13 @@ function classifyAll(payloads: Payloads): SqlVerdict {
   }
 
   if (worst === null) {
-    return { verdict: "ask", reason: "query tidak dapat diparse" };
+    return { verdict: "ask", reason: "query could not be parsed" };
   }
 
   // Several payloads means the caller is chaining statements; never let that
   // shape fall through as a plain allow even when every part reads as safe.
   if (payloads.multiple && SEVERITY[worst.verdict] < SEVERITY.ask) {
-    return { verdict: "ask", reason: "beberapa payload SQL memerlukan persetujuan" };
+    return { verdict: "ask", reason: "multiple SQL payloads require approval" };
   }
   return worst;
 }
@@ -256,7 +256,7 @@ function heredocPayload(command: string): string | null {
  * True when every argument is an informational flag that makes the client exit
  * without touching a database (`psql --version`, `mysql --help`, `sqlite3 -V`).
  * These invocations run no SQL, so the SQL classifier must stay out of the way
- * instead of reporting "query tidak dapat diparse".
+ * instead of reporting "query could not be parsed".
  */
 function isInformationalInvocation(args: string[]): boolean {
   const infoFlags = new Set([
@@ -283,7 +283,7 @@ export function classifySql(command: string): SqlVerdict | null {
       const leftTokens = tokenize(left);
       const payload = leftTokens.filter((t) => t !== "echo").map(unquote).join(" ");
       if (payload.trim().length > 0) return classifyPayload(payload);
-      return { verdict: "ask", reason: "query tidak dapat diparse" };
+      return { verdict: "ask", reason: "query could not be parsed" };
     }
   }
 

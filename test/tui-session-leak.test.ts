@@ -175,7 +175,7 @@ describe("TUI Session Isolation & Routing (TDD)", () => {
       // Dialog for session A must appear in TUI A!
       expect(renderedA).not.toBeNull();
       const comp = renderedA();
-      expect(comp.props.title).toContain("ask:git-push");
+      expect(comp.props.title).toContain("Guardian Angel: git-push");
       comp.props.onConfirm();
 
       const res = readResponse("call-for-a", ipcDir);
