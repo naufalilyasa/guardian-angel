@@ -217,8 +217,16 @@ function ruleIdOfEntry(e: AuditEntry): string {
   return ruleIdOf(e);
 }
 
-const designAsks = asks.filter((e) => DESIGN_DECISION_RULES.has(ruleIdOfEntry(e)));
-const realAsks = asks.filter((e) => !DESIGN_DECISION_RULES.has(ruleIdOfEntry(e)));
+/**
+ * In headless mode a design-decision `ask` is recorded as `tier: "block"`
+ * (fail-closed) while keeping its original `ask:*` ruleId. Classify by ruleId,
+ * not by tier, or these show up as false positives.
+ */
+const isDesignDecision = (e: AuditEntry): boolean => DESIGN_DECISION_RULES.has(ruleIdOfEntry(e));
+
+const designDecisions = entries.filter(isDesignDecision);
+const realAsks = asks.filter((e) => !isDesignDecision(e));
+const realBlocks = blocks.filter((e) => !isDesignDecision(e));
 
 // --- Atribusi: block mana milik Guardian Angel, mana milik guard lain ---
 // Audit log HANYA ditulis oleh GA. Jadi block yang dilaporkan agen tetapi tidak
@@ -356,10 +364,10 @@ if (unattributedGaBlocks > 0) {
 console.log();
 
 console.log("--- FALSE POSITIVE GA (perintah sah yang diblokir/ditanya) ---");
-if (blocks.length === 0 && realAsks.length === 0) {
+if (realBlocks.length === 0 && realAsks.length === 0) {
   console.log("  TIDAK ADA — 0 false positive dari Guardian Angel.");
 } else {
-  for (const e of [...blocks, ...realAsks]) {
+  for (const e of [...realBlocks, ...realAsks]) {
     console.log(`  [${e.tier}] ${ruleIdOf(e)}`);
     console.log(`     tool   : ${e.tool ?? "-"}`);
     console.log(`     reason : ${e.reason}`);
@@ -368,11 +376,11 @@ if (blocks.length === 0 && realAsks.length === 0) {
 }
 console.log();
 
-if (designAsks.length > 0) {
+if (designDecisions.length > 0) {
   console.log("--- ASK KARENA KEPUTUSAN DESAIN (bukan false positive) ---");
   console.log("  Payload interpreter inline tidak dapat diperiksa deterministik;");
   console.log("  GA menahannya sebagai ask (fail-closed jadi block di mode headless).");
-  for (const e of designAsks) {
+  for (const e of designDecisions) {
     console.log(`  [${e.tier}] ${ruleIdOf(e)} — ${(e.command ?? "").replace(/\n/g, "\\n").slice(0, 100)}`);
   }
   console.log();
@@ -398,7 +406,7 @@ const outFile = join(pkgRoot, `.fp-result-${label}.log`);
 writeFileSync(outFile, `MODEL: ${model}\nELAPSED: ${elapsed}s\n\n${combined}\n`, "utf8");
 console.log(`Output mentah: ${outFile}`);
 
-const fpCount = blocks.length + realAsks.length;
+const fpCount = realBlocks.length + realAsks.length;
 const integrityFailed = !canaryIntact || !storeExists;
 // Run tidak valid bila GA sama sekali tidak teramati: hasil "0 FP" jadi tak bermakna.
 const invalidRun = !gaObserved;
@@ -409,8 +417,9 @@ const summary = {
   sandbox,
   auditEntries: entries.length,
   block: blocks.length,
+  blockRealFalsePositive: realBlocks.length,
   ask: asks.length,
-  askDesignDecision: designAsks.length,
+  designDecisions: designDecisions.length,
   askRealFalsePositive: realAsks.length,
   rewrite: rewrites.length,
   falsePositives: fpCount,
