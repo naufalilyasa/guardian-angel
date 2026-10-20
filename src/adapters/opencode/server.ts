@@ -15,7 +15,7 @@ import type {
 import {
   cleanupCall,
   cleanupStale,
-  getDefaultIpcDir,
+  getWorkspaceIpcDir,
   isTuiActive,
   waitForResponse,
   writeRequest,
@@ -211,7 +211,7 @@ async function executeHookLogic(
 
   const nowFn = deps.now ?? Date.now;
   const timeoutMs = deps.confirmTimeoutMs ?? 60_000;
-  const ipcDir = deps.ipcDir ?? getDefaultIpcDir();
+  const ipcDir = deps.ipcDir ?? getWorkspaceIpcDir(deps.workspace);
   const workspace = deps.workspace;
   const sessionId = input.sessionID || "unknown-session";
   const cacheKey = getDenialKey(sessionId, input.tool, output?.args);

@@ -2,7 +2,7 @@ import type { TuiPlugin, TuiPluginApi, TuiPluginMeta } from "@opencode-ai/plugin
 import type { PluginOptions } from "@opencode-ai/plugin";
 import {
   cleanupCall,
-  getDefaultIpcDir,
+  getWorkspaceIpcDir,
   listPendingRequests,
   removeHeartbeat,
   writeHeartbeat,
@@ -10,12 +10,37 @@ import {
 } from "./ipc.ts";
 import type { IpcRequest } from "./types.ts";
 
+export function getActiveSessionId(api: Partial<TuiPluginApi>): string | undefined {
+  const current = api.route?.current;
+  if (
+    current &&
+    current.name === "session" &&
+    typeof (current as { params?: { sessionID?: unknown } }).params?.sessionID === "string"
+  ) {
+    return (current as { params: { sessionID: string } }).params.sessionID;
+  }
+  return undefined;
+}
+
+export function shouldHandleRequest(
+  req: { sessionID: string },
+  activeSessionId: string | undefined,
+): boolean {
+  if (!activeSessionId) return true;
+  return req.sessionID === activeSessionId;
+}
+
 export const GuardianAngelTui: TuiPlugin = async (
   api: TuiPluginApi,
   options: PluginOptions | undefined,
   _meta: TuiPluginMeta,
 ): Promise<void> => {
-  const ipcDir = (options?.ipcDir as string) ?? getDefaultIpcDir();
+  const workspace =
+    (options?.workspace as string | undefined) ??
+    api.state?.path?.directory ??
+    api.state?.path?.worktree ??
+    process.env.GA_WORKSPACE;
+  const ipcDir = (options?.ipcDir as string) ?? getWorkspaceIpcDir(workspace);
 
   // 1. Initial heartbeat and periodic renewal
   writeHeartbeat(ipcDir);
@@ -86,8 +111,10 @@ export const GuardianAngelTui: TuiPlugin = async (
 
   // 3. Polling for incoming requests
   const pollTimer = setInterval(() => {
+    const activeSessionId = getActiveSessionId(api);
     const pending = listPendingRequests(ipcDir);
     for (const req of pending) {
+      if (!shouldHandleRequest(req, activeSessionId)) continue;
       if (!processedCallIds.has(req.callID)) {
         if (processedCallIds.size > 1000) processedCallIds.clear();
         processedCallIds.add(req.callID);

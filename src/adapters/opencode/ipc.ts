@@ -8,8 +8,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { join, resolve } from "node:path";
 import { tmpdir, userInfo } from "node:os";
 import type { IpcHeartbeat, IpcRequest, IpcResponse } from "./types.ts";
 
@@ -24,6 +24,18 @@ export function getDefaultIpcDir(): string {
     // fallback
   }
   return join(tmpdir(), `guardian-angel-ipc-${username}`);
+}
+
+export function getWorkspaceIpcDir(
+  workspace?: string,
+  envIpcDir = process.env.GA_IPC_DIR,
+): string {
+  if (envIpcDir) return envIpcDir;
+  const base = getDefaultIpcDir();
+  if (!workspace || workspace.trim().length === 0) return base;
+  // ponytail: 16-hex sha256 provides collision-free workspace isolation in tmpdir
+  const hash = createHash("sha256").update(resolve(workspace)).digest("hex").slice(0, 16);
+  return join(base, hash);
 }
 
 export function ensureIpcDir(ipcDir = getDefaultIpcDir()): string {
