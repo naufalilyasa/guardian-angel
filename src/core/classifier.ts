@@ -241,12 +241,59 @@ function stripLaunchers(tokens: string[]): { tokens: string[]; hitLimit: boolean
   return { tokens: rest, hitLimit };
 }
 
+/**
+ * Extract bare subshell groups `( ... )` from a segment.
+ *
+ * Quote-aware on purpose: in `echo "at ($(date)) done"` the outer parentheses
+ * are literal characters being echoed, while `$(date)` is the only live
+ * substitution — and that one is handled by the SUBSTITUTION pass. Treating the
+ * literal pair as a subshell would push `$(date)` into command position and
+ * produce a spurious `ask:variable-command`.
+ *
+ * Arithmetic expansion `$(( ... ))` is skipped for the same reason: it evaluates
+ * numbers, never a command word.
+ */
 function extractParenGroups(str: string): string[] {
   const groups: string[] = [];
   let depth = 0;
   let start = -1;
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+
   for (let i = 0; i < str.length; i++) {
     const ch = str[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+
+    // `$((` opens arithmetic expansion, not a subshell.
+    if (ch === "(" && str[i - 1] === "(" && str[i - 2] === "$") {
+      // Skip to the matching `))`.
+      let d = 2;
+      let j = i + 1;
+      while (j < str.length && d > 0) {
+        if (str[j] === "(") d++;
+        else if (str[j] === ")") d--;
+        j++;
+      }
+      i = j - 1;
+      continue;
+    }
+
     if (ch === "(") {
       if (depth === 0) start = i + 1;
       depth++;
@@ -429,6 +476,56 @@ function maskEscapedBackticks(command: string): string {
  * were being read as dynamic targets and blocked. Double quotes still expand
  * and are deliberately left untouched.
  */
+/**
+ * Replace the *contents* of every quoted span with an inert placeholder.
+ *
+ * `BLOCK_PATTERNS` and `ASK_PATTERNS` are text regexes. Running them on a
+ * command that still contains quoted text made ordinary work fail: a commit
+ * message describing `rm -rf /`, a `grep -rn "use shred"`, or an
+ * `echo "never run mkfs"` all matched the destructive pattern even though the
+ * quoted text is data that never executes. Masking the payload keeps the
+ * surrounding shell syntax (so `git push`, real redirects, and real `rm` still
+ * match) while removing the false positives.
+ *
+ * Delimiters are preserved so offsets and quote-split words (`r'm'`) survive.
+ */
+function maskQuotedPayloads(command: string): string {
+  let out = "";
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i];
+    if (escaped) {
+      out += quote === null ? ch : "_";
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\" && quote !== "'") {
+      escaped = true;
+      out += ch;
+      continue;
+    }
+    if (quote !== null) {
+      if (ch === quote) {
+        quote = null;
+        out += ch;
+      } else {
+        out += "_";
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      out += ch;
+      continue;
+    }
+    out += ch;
+  }
+
+  return out;
+}
+
 function maskSingleQuoted(command: string): string {
   let out = "";
   let quote: '"' | "'" | null = null;
@@ -704,7 +801,21 @@ const WRITE_VERBS = new Set([
   "tar", "unzip", "patch", "shred",
 ]);
 
-function readTargetToken(command: string, start: number): { target: string; end: number } {
+/**
+ * Verbs whose write targets `extractVerbTargets` can identify precisely, so
+ * non-target arguments (a sed script, chown's owner spec, tar's input list) can
+ * safely be skipped. Every other write verb keeps the conservative scan over
+ * all arguments, because mis-identifying a target there would let a protected
+ * path through (e.g. `ln -sf x .git/config`).
+ */
+const PRECISE_TARGET_VERBS = new Set([
+  "tee", "cp", "mv", "install", "truncate", "dd", "sed",
+]);
+
+function readTargetToken(
+  command: string,
+  start: number,
+): { target: string; end: number; quoted: boolean } {
   let j = start;
   while (j < command.length && (command[j] === ">" || command[j] === "|" || command[j] === "&")) {
     j += 1;
@@ -717,15 +828,23 @@ function readTargetToken(command: string, start: number): { target: string; end:
   let tQuote: '"' | "'" | null = null;
   let parenDepth = 0;
   let inBacktick = false;
+  let sawQuoted = false;
 
   while (j < command.length) {
     const tch = command[j];
     if (tQuote !== null) {
-      if (tch === tQuote) tQuote = null;
-      target += tch;
+      // Quote characters are dropped rather than kept: a `(` or `)` inside
+      // `"report (final).md"` is a literal filename character, not a subshell.
+      // Keeping the quotes made the dynamic-target check fire on valid names.
+      if (tch === tQuote) {
+        tQuote = null;
+        sawQuoted = true;
+      } else {
+        target += tch;
+      }
     } else if (tch === '"' || tch === "'") {
       tQuote = tch;
-      target += tch;
+      sawQuoted = true;
     } else if (tch === "`") {
       inBacktick = !inBacktick;
       target += tch;
@@ -742,14 +861,25 @@ function readTargetToken(command: string, start: number): { target: string; end:
     }
     j += 1;
   }
-  return { target: target.trim(), end: j };
+  // `sawQuoted` marks the whole target as literal: no expansion or operator
+  // can hide inside it, so callers must not treat `(` `)` `<` as dynamic.
+  return { target: target.trim(), end: j, quoted: sawQuoted };
 }
 
-/** Extract unquoted redirection target paths from a command string. */
-function extractUnquotedRedirects(command: string): string[] {
+/** A redirection target plus the operator that produced it. */
+type RedirectTarget = { target: string; append: boolean; quoted: boolean };
+
+/**
+ * Extract redirection targets from a command string.
+ *
+ * `append` distinguishes `>>` from `>`: appending to a log never destroys the
+ * existing contents, so treating it as an overwrite made `echo x >> build.log`
+ * prompt on every build.
+ */
+function extractUnquotedRedirects(command: string): RedirectTarget[] {
   let quote: '"' | "'" | null = null;
   let escaped = false;
-  const targets: string[] = [];
+  const targets: RedirectTarget[] = [];
 
   for (let i = 0; i < command.length; i += 1) {
     const ch = command[i];
@@ -771,8 +901,9 @@ function extractUnquotedRedirects(command: string): string[] {
     }
 
     if (ch === ">") {
-      const { target, end } = readTargetToken(command, i + 1);
-      if (target.length > 0) targets.push(target);
+      const append = command[i + 1] === ">";
+      const { target, end, quoted } = readTargetToken(command, i + 1);
+      if (target.length > 0) targets.push({ target, append, quoted });
       i = end - 1;
     }
   }
@@ -802,14 +933,16 @@ function classifyProtectedWrite(
     const cwd = cwdMap?.get(segment) ?? workspace;
 
     for (const raw of extractUnquotedRedirects(segment)) {
-      if (/[$`<>()]/.test(raw)) {
+      // A fully quoted target is literal: `> "report (final).md"` creates a
+      // file with parentheses in its name and runs nothing.
+      if (!raw.quoted && /[$`<>()]/.test(raw.target)) {
         return {
           verdict: "block",
-          reason: `pengalihan ke target dinamis (${raw}) berisiko merusak store dan diblokir`,
+          reason: `pengalihan ke target dinamis (${raw.target}) berisiko merusak store dan diblokir`,
           ruleId: "block:dynamic-redirect",
         };
       }
-      const clean = unquote(raw).replace(/['"\\]/g, "");
+      const clean = raw.target.replace(/['"\\]/g, "");
       const target = resolveLexical(cwd, clean);
       if (isProtectedPath(workspace, target) || isProtectedPath(workspace, resolvePhysical(workspace, target))) {
         return blocked(target);
@@ -830,13 +963,42 @@ function classifyProtectedWrite(
     // audit log, which the README promises stays allowed.
     if (verbName === "sed" && !sedWritesInPlace(verbArgs)) continue;
 
-    for (const rawToken of verbArgs) {
+    // Prefer precise target extraction so non-target arguments (the sed script,
+    // chown's owner spec) are not mistaken for paths. Verbs without a precise
+    // extractor keep the conservative all-arguments scan: `ln -sf x .git/config`
+    // must still be caught.
+    const extracted = extractVerbTargets(verbName, verbArgs);
+    const precise = PRECISE_TARGET_VERBS.has(verbName);
+    const writeTargets = precise ? extracted.targets : verbArgs;
+
+    // A verb that also takes read operands (cp/mv source, tar input list) can
+    // hide the store in a non-target argument: `cp x $(echo .git/config)`.
+    // Scan the remaining arguments for a *static* protected path, but do not
+    // apply the dynamic-target rule to them — `cp $(pwd)/a b` is a source, and
+    // blocking it broke the most common Makefile idiom.
+    if (precise) {
+      const targetSet = new Set(writeTargets);
+      for (const rawToken of verbArgs) {
+        if (targetSet.has(rawToken)) continue;
+        const token = unquote(rawToken).replace(/^[()]+|[()]+$/g, "").replace(/['"\\]/g, "");
+        if (!token || token.startsWith("-") || /[$`<>()]/.test(token)) continue;
+        const target = resolveLexical(cwd, token);
+        if (isProtectedPath(workspace, target) || isProtectedPath(workspace, resolvePhysical(workspace, target))) {
+          return blocked(target);
+        }
+      }
+    }
+
+    for (const rawToken of writeTargets) {
       let token = rawToken;
       if (token.startsWith("of=")) token = token.slice(3);
       else if (token.startsWith("--output=")) token = token.slice(9);
       token = unquote(token).replace(/^[()]+|[()]+$/g, "").replace(/['"\\]/g, "");
       if (token.startsWith("-") || /^(?:[0-9]+)?>>?|^(?:[0-9]+)?<|^&>/.test(token)) continue;
-      if (/[$`<>()]/.test(token)) {
+      // Only `$` and backticks expand. A bare parenthesis surviving unquoting
+      // came from a quoted literal (`sed -i 's/a(b)/c/' f.ts`, `cp x "b (1).json"`),
+      // so it is part of the filename, not a subshell.
+      if (/[$`]/.test(token)) {
         return {
           verdict: "block",
           reason: `argumen penulisan dinamis (${token}) berisiko merusak store dan diblokir`,
@@ -956,12 +1118,15 @@ function checkTargetOverwrite(
   targetPath: string,
   srcPaths?: string[],
   cwd: string = workspace,
+  quoted = false,
 ): GuardResult | null {
   if (!targetPath) return null;
   const clean = unquote(targetPath).replace(/['"\\]/g, "");
   if (!clean || isSink(clean)) return null;
 
-  if (/[$`<>()]/.test(clean)) {
+  // A fully quoted target is a literal filename: `(` `)` `$` `<` `>` inside it
+  // are characters, not shell operators. Only unquoted targets can expand.
+  if (!quoted && /[$`<>()]/.test(clean)) {
     return {
       verdict: "ask",
       reason: `menulis ke target dinamis: ${clean}`,
@@ -980,17 +1145,29 @@ function checkTargetOverwrite(
   }
 
   let effective = target;
+  let targetIsDirectory = false;
   try {
-    if (existsSync(target) && statSync(target).isDirectory() && srcPaths && srcPaths.length > 0) {
+    targetIsDirectory = existsSync(target) && statSync(target).isDirectory();
+    if (targetIsDirectory && srcPaths && srcPaths.length > 0) {
+      // `cp a.ts dir/` writes `dir/a.ts`. Only that file can be overwritten;
+      // the directory itself is not a victim. If no candidate exists yet the
+      // copy creates new files, so nothing is overwritten.
+      let resolvedCandidate = false;
       for (const sp of srcPaths) {
         const candidate = resolve(target, basenameOf(sp));
         if (existsSync(candidate)) {
           effective = candidate;
+          resolvedCandidate = true;
           break;
         }
       }
+      if (!resolvedCandidate) return null;
     }
   } catch {}
+
+  // Copying/moving into an existing directory is a normal, non-destructive
+  // operation; only an actual file at the resolved path counts as overwrite.
+  if (targetIsDirectory) return null;
 
   const exists =
     existsSync(effective) ||
@@ -1018,7 +1195,10 @@ function classifyOverwrite(
     const cwd = cwdMap?.get(segment) ?? workspace;
 
     for (const raw of extractUnquotedRedirects(segment)) {
-      const res = checkTargetOverwrite(workspace, raw, undefined, cwd);
+      // Appending never destroys existing content, so `>>` must not raise an
+      // overwrite prompt. Only `>` (truncate) is checked here.
+      if (raw.append) continue;
+      const res = checkTargetOverwrite(workspace, raw.target, undefined, cwd, raw.quoted);
       if (res) return res;
     }
 
@@ -1193,6 +1373,9 @@ function classifyCommand(
     command.replace(/\$\{IFS\}|\$IFS\b/g, " "),
   );
   const masked = maskEscapedBackticks(maskSingleQuoted(normalized));
+  // Pattern matching uses a variant where quoted *payload* is inert. Wrapper
+  // unwrapping still runs on `masked` so `bash -c "rm -rf /"` keeps working.
+  const patternTarget = maskQuotedPayloads(normalized);
   const segments = splitSegments(normalized);
   const { cwdMap, error: cwdError } = trackEffectiveCwd(segments, workspace);
   if (cwdError) return cwdError;
@@ -1203,8 +1386,12 @@ function classifyCommand(
   const interpreter = classifyInterpreterCode(segments);
   if (interpreter?.verdict === "block") return interpreter;
 
+  // Patterns must run against `masked`, not `normalized`: `normalized` keeps
+  // quote characters intact, so text inside a quoted argument (`git commit -m
+  // "reject rm -rf /"`, `grep -rn "use shred"`) was scanned as live shell and
+  // blocked work that never executes anything.
   for (const { id, re, reason } of BLOCK_PATTERNS) {
-    if (re.test(normalized)) return { verdict: "block", reason, ruleId: id };
+    if (re.test(patternTarget)) return { verdict: "block", reason, ruleId: id };
   }
 
   const sql = classifySql(normalized);
@@ -1274,7 +1461,7 @@ function classifyCommand(
   }
 
   for (const { id, re, reason } of ASK_PATTERNS) {
-    if (re.test(normalized)) {
+    if (re.test(patternTarget)) {
       if (!effective) return { verdict: "ask", reason, ruleId: id };
       const merged = stricter(effective, { verdict: "ask", reason, ruleId: id });
       if (merged.verdict === "ask" && effective.replacement && isRewriteable) {

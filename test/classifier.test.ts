@@ -751,7 +751,10 @@ describe("REGRESSION: overwrite detection and tool path normalization", () => {
       workspace: ws,
     });
     expect(res3.verdict).toBe("block");
-    expect(res3.ruleId).toBe("block:dynamic-write-verb");
+    // A command substitution in the SOURCE operand resolves to a protected path.
+    // The non-target scan now names the actual danger (protected store) instead
+    // of the generic dynamic-write rule, so accept either block-tier rule.
+    expect(["block:protected-bash-write", "block:dynamic-write-verb"]).toContain(res3.ruleId ?? "");
   });
 
   test("REGRESSION: path-prefixed /bin/rm is classified identically to rm", () => {

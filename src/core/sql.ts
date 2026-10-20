@@ -135,8 +135,20 @@ function tokenize(command: string): string[] {
   return tokens;
 }
 
+/**
+ * Locate the SQL client, but only where it can actually run.
+ *
+ * Scanning every token meant `psql --version`, `which psql`, and `grep -rn psql
+ * docs/` all classified as SQL and prompted for approval, even though none of
+ * them opens a connection. The client must be the command word — position 0
+ * after launchers — or immediately after a `|`/`;`/`&&` boundary.
+ */
 function findClient(tokens: string[]): { index: number; client: string } | null {
+  const isBoundary = (token: string | undefined): boolean =>
+    token === undefined || /^(\||\|\||;|&&|\|\|)$/.test(token);
+
   for (let i = 0; i < tokens.length; i += 1) {
+    if (!isBoundary(tokens[i - 1])) continue;
     const base = tokens[i].split("/").pop() ?? tokens[i];
     if (CLIENTS.has(base)) return { index: i, client: base };
   }
@@ -240,6 +252,24 @@ function heredocPayload(command: string): string | null {
   return match ? match[2] : null;
 }
 
+/**
+ * True when every argument is an informational flag that makes the client exit
+ * without touching a database (`psql --version`, `mysql --help`, `sqlite3 -V`).
+ * These invocations run no SQL, so the SQL classifier must stay out of the way
+ * instead of reporting "query tidak dapat diparse".
+ */
+function isInformationalInvocation(args: string[]): boolean {
+  const infoFlags = new Set([
+    "--version",
+    "-V",
+    "--help",
+    "-?",
+    "--usage",
+  ]);
+  if (args.length === 0) return false;
+  return args.every((arg) => infoFlags.has(arg));
+}
+
 export function classifySql(command: string): SqlVerdict | null {
   if (typeof command !== "string" || command.trim().length === 0) return null;
 
@@ -267,5 +297,6 @@ export function classifySql(command: string): SqlVerdict | null {
   if (!found) return null;
 
   const args = tokens.slice(found.index + 1);
+  if (isInformationalInvocation(args)) return null;
   return classifyAll(payloadFromArgs(found.client, args));
 }
