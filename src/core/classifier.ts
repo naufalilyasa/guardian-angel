@@ -392,6 +392,34 @@ function neutralizeQuotedHeredoc(command: string): string {
 }
 
 /**
+ * Neutralise backticks that bash treats as literal because a backslash
+ * escapes them.
+ *
+ * `` \` `` is a literal backtick in every quoting context, so
+ * `git commit -m "explain \`rm -rf\`"` never runs a command substitution and
+ * must not be scanned for one. Only an ODD number of preceding backslashes
+ * escapes the backtick: `"\\`id`"` (two backslashes) yields a literal
+ * backslash followed by a LIVE substitution, so even runs stay untouched.
+ *
+ * Replacing the backtick with `_` keeps the surrounding text intact, so
+ * ordinary command words, quoting and protected-path scanning are unaffected.
+ */
+function maskEscapedBackticks(command: string): string {
+  let out = "";
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i];
+    if (ch !== "`") {
+      out += ch;
+      continue;
+    }
+    let backslashes = 0;
+    for (let j = i - 1; j >= 0 && command[j] === "\\"; j -= 1) backslashes += 1;
+    out += backslashes % 2 === 1 ? "_" : ch;
+  }
+  return out;
+}
+
+/**
  * Mask expansion characters that bash treats as literal inside `'...'`.
  *
  * Only `$` and `` ` `` are neutralised — quote characters and backslashes stay
@@ -1164,7 +1192,7 @@ function classifyCommand(
   const normalized = neutralizeQuotedHeredoc(
     command.replace(/\$\{IFS\}|\$IFS\b/g, " "),
   );
-  const masked = maskSingleQuoted(normalized);
+  const masked = maskEscapedBackticks(maskSingleQuoted(normalized));
   const segments = splitSegments(normalized);
   const { cwdMap, error: cwdError } = trackEffectiveCwd(segments, workspace);
   if (cwdError) return cwdError;
@@ -1188,7 +1216,7 @@ function classifyCommand(
     };
   }
 
-  const wrapper = classifyUnwrapped(normalized, workspace, depth);
+  const wrapper = classifyUnwrapped(masked, workspace, depth);
   if (wrapper && wrapper.verdict === "block") return wrapper;
 
   for (const segment of segments) {
@@ -1295,14 +1323,12 @@ function classifyWriteTool(call: ToolCall, workspace: string): GuardResult {
     };
   }
 
-  if (isInsideWorkspace(workspace, lexical)) {
-    return { verdict: "allow", reason: "menulis di dalam workspace", ruleId: "allow:write-inside" };
-  }
-  return {
-    verdict: "ask",
-    reason: `menulis di luar workspace: ${lexical}`,
-    ruleId: "ask:write-outside",
-  };
+  // The physical check above already proved the target resolves inside the
+  // workspace, so this is an allow. Re-testing lexically would reject a
+  // workspace spelled `/private/var/...` (what the harness reports) together
+  // with a file path spelled `/var/...` (what the tool args carry) on macOS,
+  // where `/var` is a symlink to `/private/var`.
+  return { verdict: "allow", reason: "menulis di dalam workspace", ruleId: "allow:write-inside" };
 }
 
 /**

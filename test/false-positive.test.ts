@@ -99,3 +99,25 @@ describe("REGRESSION: sed only writes with -i / --in-place", () => {
     expect(run(`sed --in-place 's/a/b/' .guardian-angel/audit.jsonl`).verdict).toBe("block");
   });
 });
+
+describe("REGRESSION: escaped backticks are literal, not substitutions", () => {
+  test("backtick escaped inside double quotes does not run a substitution", () => {
+    expect(run('git commit -m "docs: explain \\`rm -rf\\` danger"').verdict).toBe("allow");
+  });
+
+  test("escaped backtick pair in echo stays allow", () => {
+    expect(run('echo "a \\`b\\` c"').verdict).toBe("allow");
+  });
+
+  test("UNescaped backtick with rm is still blocked", () => {
+    expect(run('echo "a `rm -rf /` c"').ruleId).toBe("block:rm-root");
+  });
+
+  test("UNescaped backtick with workspace rm is still blocked as wrapper", () => {
+    expect(run('echo "a `rm -rf ./build` c"').ruleId).toBe("block:rm-wrapper");
+  });
+
+  test("even number of backslashes leaves the substitution live", () => {
+    expect(run('echo "a \\\\`rm -rf /` c"').verdict).toBe("block");
+  });
+});
