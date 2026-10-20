@@ -373,6 +373,89 @@ function unquote(token: string): string {
   return token;
 }
 
+/**
+ * Replace a quoted heredoc body with a placeholder.
+ *
+ * `<< 'EOF'` and `<< "EOF"` disable expansion: bash copies the body verbatim
+ * and never parses it as shell. Scanning that text as live commands produced
+ * false positives for ordinary "write a test file that mentions `>`" work.
+ * The delimiter line itself is kept so the redirect target still classifies.
+ *
+ * Unquoted delimiters (`<< EOF`) DO expand, so those bodies are left intact
+ * and stay subject to every rule.
+ */
+function neutralizeQuotedHeredoc(command: string): string {
+  const HEREDOC = /(<<-?\s*)(['"])([A-Za-z_][A-Za-z0-9_]*)\2[^\n]*\n([\s\S]*?)\n\3(?=\s|$)/g;
+  return command.replace(HEREDOC, (_match, intro: string, quote: string, name: string) => {
+    return `${intro}${quote}${name}${quote} __heredoc_body__\n${name}`;
+  });
+}
+
+/**
+ * Mask expansion characters that bash treats as literal inside `'...'`.
+ *
+ * Only `$` and `` ` `` are neutralised — quote characters and backslashes stay
+ * intact so quote-split command words (`r'm'`, `d'd'd`) still normalise
+ * correctly. Bash performs no expansion inside single quotes, so
+ * `sed -n '/start/,$p'` (where `$` means "last line") and `awk '{print $1}'`
+ * were being read as dynamic targets and blocked. Double quotes still expand
+ * and are deliberately left untouched.
+ */
+function maskSingleQuoted(command: string): string {
+  let out = "";
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i];
+    if (escaped) {
+      out += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\" && quote !== "'") {
+      escaped = true;
+      out += ch;
+      continue;
+    }
+    if (quote === "'") {
+      if (ch === "'") {
+        quote = null;
+        out += ch;
+      } else if (ch === "$" || ch === "`") {
+        out += "_";
+      } else {
+        out += ch;
+      }
+      continue;
+    }
+    if (quote === '"') {
+      if (ch === '"') quote = null;
+      out += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      out += ch;
+      continue;
+    }
+    out += ch;
+  }
+
+  return out;
+}
+
+/** True when a `sed` invocation actually writes (`-i` / `--in-place`). */
+function sedWritesInPlace(args: string[]): boolean {
+  return args.some(
+    (t) =>
+      t === "-i" ||
+      t.startsWith("-i") ||
+      t === "--in-place" ||
+      t.startsWith("--in-place="),
+  );
+}
+
 function tokenize(segment: string): string[] {
   const tokens: string[] = [];
   let current = "";
@@ -711,7 +794,15 @@ function classifyProtectedWrite(
     );
     if (verbIndex === -1) continue;
 
-    for (const rawToken of tokens.slice(verbIndex + 1)) {
+    const verbName = stripQuotes(basenameOf(tokens[verbIndex])).replace(/^[()]+|[()]+$/g, "");
+    const verbArgs = tokens.slice(verbIndex + 1);
+
+    // `sed` only writes with -i/--in-place. Treating every `sed` as a writer
+    // blocked read-only pipelines (`... | sed -n '1,10p'`) and even reading the
+    // audit log, which the README promises stays allowed.
+    if (verbName === "sed" && !sedWritesInPlace(verbArgs)) continue;
+
+    for (const rawToken of verbArgs) {
       let token = rawToken;
       if (token.startsWith("of=")) token = token.slice(3);
       else if (token.startsWith("--output=")) token = token.slice(9);
@@ -1070,12 +1161,15 @@ function classifyCommand(
       ruleId: "ask:wrapper-depth",
     };
   }
-  const normalized = command.replace(/\$\{IFS\}|\$IFS\b/g, " ");
+  const normalized = neutralizeQuotedHeredoc(
+    command.replace(/\$\{IFS\}|\$IFS\b/g, " "),
+  );
+  const masked = maskSingleQuoted(normalized);
   const segments = splitSegments(normalized);
   const { cwdMap, error: cwdError } = trackEffectiveCwd(segments, workspace);
   if (cwdError) return cwdError;
 
-  const protectedWrite = classifyProtectedWrite(normalized, workspace, cwdMap);
+  const protectedWrite = classifyProtectedWrite(masked, workspace, cwdMap);
   if (protectedWrite) return protectedWrite;
 
   const interpreter = classifyInterpreterCode(segments);

@@ -1,0 +1,21 @@
+fix(classifier): stop blocking inert text in heredocs and single quotes
+
+Three parser gaps produced block verdicts for commands that never touch a
+protected path, making the guard unusable for ordinary work:
+
+- Quoted heredoc bodies (<< 'EOF', << "EOF") were scanned as live shell, so
+  writing a test file whose contents mention a redirect or a destructive
+  command was blocked. neutralizeQuotedHeredoc now replaces the body with a
+  placeholder while keeping the delimiter, so the heredoc's own redirect
+  target still classifies. Unquoted delimiters expand, so those bodies stay
+  guarded.
+- Single-quoted arguments were scanned for expansion, so sed -n '/start/,$p'
+  (where $ means last line) and awk '{print $1}' tripped the dynamic-target
+  rule. maskSingleQuoted now neutralises only $ and backticks inside single
+  quotes, leaving quote characters intact so quote-split command words
+  (r'm', d'd'd) still normalise.
+- sed was treated as a write verb even without -i, blocking read-only
+  pipelines and even reads of the audit log. sed now only counts as a writer
+  with -i/--in-place.
+
+14 new regression tests in test/false-positive.test.ts.
