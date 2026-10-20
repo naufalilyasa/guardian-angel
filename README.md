@@ -101,6 +101,8 @@ Daftarkan TUI plugin di `tui.json`:
 }
 ```
 
+Specifier `guardian-angel-poc/opencode-server` dan `guardian-angel-poc/opencode-tui` juga tersedia dalam bentuk singkat: `guardian-angel-poc`, `guardian-angel-poc/server`, dan `guardian-angel-poc/tui` (semuanya menunjuk ke modul yang sama).
+
 ---
 
 ## Integrasi Senpi / OMO Native
