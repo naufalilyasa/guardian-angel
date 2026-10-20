@@ -397,5 +397,65 @@ describe("OpenCode Adapter", () => {
 
       for (const cb of disposeCallbacks) cb();
     });
+
+    test("renders DialogSelect with Allow and Deny when available", async () => {
+      let dialogRendered: (() => any) | null = null;
+      let dialogCleared = false;
+      const disposeCallbacks: Array<() => void> = [];
+
+      const mockApi: any = {
+        ui: {
+          dialog: {
+            replace: (render: () => any) => {
+              dialogRendered = render;
+            },
+            clear: () => {
+              dialogCleared = true;
+            },
+          },
+          DialogSelect: (props: any) => ({ type: "select", props }),
+        },
+        lifecycle: {
+          onDispose: (cb: () => void) => {
+            disposeCallbacks.push(cb);
+          },
+        },
+      };
+
+      await GuardianAngelTui(mockApi, { ipcDir }, {} as any);
+
+      const req: IpcRequest = {
+        callID: "call-tui-select-test",
+        sessionID: "ses-1",
+        tool: "bash",
+        command: "rm -rf /outside",
+        reason: "penghapusan luar workspace",
+        ruleId: "ask:rm-outside",
+        createdAt: Date.now(),
+        deadline: Date.now() + 5000,
+      };
+      writeRequest(req, ipcDir);
+
+      for (let i = 0; i < 20; i++) {
+        if (dialogRendered !== null) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      expect(dialogRendered).not.toBeNull();
+      const component = dialogRendered!();
+      expect(component.type).toBe("select");
+      expect(component.props.title).toContain("Permission required: ask:rm-outside");
+      expect(component.props.options.map((o: any) => o.title)).toEqual(["Allow", "Deny"]);
+
+      // Selecting allow option
+      const allowOpt = component.props.options.find((o: any) => o.value === "allow");
+      allowOpt.onSelect();
+
+      expect(dialogCleared).toBe(true);
+      const response = readResponse("call-tui-select-test", ipcDir);
+      expect(response?.decision).toBe("allow");
+
+      for (const cb of disposeCallbacks) cb();
+    });
   });
 });

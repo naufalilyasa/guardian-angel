@@ -90,6 +90,33 @@ export const GuardianAngelTui: TuiPlugin = async (
       const details = req.command ?? req.path ?? "(tidak ada teks tambahan)";
       api.ui.dialog.replace(
         () => {
+          // Prefer native DialogSelect with explicit "Allow" and "Deny" options
+          // matching OpenCode native permission dialog style (instead of generic
+          // Confirm/Cancel buttons).
+          if (typeof api.ui.DialogSelect === "function") {
+            return api.ui.DialogSelect({
+              title: `△ Permission required: ${req.ruleId}`,
+              placeholder: `${req.reason} — [${req.tool}]: ${details}`,
+              options: [
+                {
+                  title: "Allow",
+                  value: "allow",
+                  description: `Izinkan eksekusi [${req.tool}] (diingat 24 jam)`,
+                  onSelect: () => settle("allow"),
+                },
+                {
+                  title: "Deny",
+                  value: "deny",
+                  description: "Tolak perintah ini (fail-closed, ESC)",
+                  onSelect: () => settle("deny"),
+                },
+              ],
+              onSelect: (opt) => {
+                const val = (opt as { value?: string })?.value;
+                settle(val === "allow" ? "allow" : "deny");
+              },
+            });
+          }
           return api.ui.DialogConfirm({
             title: `guardian-angel: ${req.ruleId}`,
             message: `${req.reason}\n\n[${req.tool}]: ${details}`,
