@@ -19,7 +19,14 @@ export interface PromptSlotItem {
 export interface PromptSlotWrapperProps {
   api: TuiPluginApi;
   activeRequest: () => PromptSlotItem | null;
-  slotProps: { session_id?: string; children?: any };
+  slotProps: {
+    session_id?: string;
+    visible?: boolean;
+    disabled?: boolean;
+    on_submit?: () => void;
+    ref?: (ref: any) => void;
+    children?: any;
+  };
 }
 
 export function PromptSlotWrapper(props: PromptSlotWrapperProps) {
@@ -36,8 +43,41 @@ export function PromptSlotWrapper(props: PromptSlotWrapperProps) {
     return item;
   };
 
+  const renderPrompt = () => {
+    if (typeof props.api.ui?.Prompt === "function") {
+      return props.api.ui.Prompt({
+        get sessionID() {
+          return props.slotProps.session_id;
+        },
+        get visible() {
+          return props.slotProps.visible;
+        },
+        get disabled() {
+          return Boolean(current() || props.slotProps.disabled);
+        },
+        get onSubmit() {
+          return props.slotProps.on_submit;
+        },
+        get ref() {
+          return props.slotProps.ref;
+        },
+        get right() {
+          return typeof props.api.ui?.Slot === "function"
+            ? props.api.ui.Slot({
+                name: "session_prompt_right",
+                get session_id() {
+                  return props.slotProps.session_id ?? "";
+                },
+              })
+            : undefined;
+        },
+      });
+    }
+    return props.slotProps.children ?? null;
+  };
+
   return (
-    <box flexDirection="column" gap={1}>
+    <box flexDirection="column" gap={current() ? 1 : 0}>
       <Show when={current()} fallback={<box height={0} />}>
         {(item) => (
           <QuestionDialog
@@ -48,7 +88,7 @@ export function PromptSlotWrapper(props: PromptSlotWrapperProps) {
           />
         )}
       </Show>
-      {props.slotProps.children}
+      {renderPrompt()}
     </box>
   );
 }

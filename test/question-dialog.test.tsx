@@ -299,4 +299,134 @@ describe("QuestionDialog Component (OpenTUI Solid)", () => {
       setup.renderer.destroy();
     }
   });
+
+  test("PromptSlotWrapper delegates to api.ui.Prompt with chips and right slot", async () => {
+    const setup = await createTestRenderer({ width: 88, height: 24 });
+    let passedPromptProps: any = null;
+
+    const mockApi: any = {
+      theme: {
+        current: {
+          warning: "#f5a742",
+          text: "#eeeeee",
+          textMuted: "#808080",
+          backgroundPanel: "#141414",
+          backgroundElement: "#1e1e1e",
+        },
+      },
+      ui: {
+        Prompt: (props: any) => {
+          passedPromptProps = props;
+          return (
+            <box flexDirection="row">
+              <text>[AGENT: build] [MODEL: deepseek] [PROMPT INPUT]</text>
+              {props.right}
+            </box>
+          );
+        },
+        Slot: (props: any) => <text>[RIGHT: {props.name}]</text>,
+      },
+      renderer: setup.renderer,
+    };
+
+    const mockRef = () => {};
+    const mockSubmit = () => {};
+
+    try {
+      await render(
+        () => (
+          <PromptSlotWrapper
+            api={mockApi}
+            activeRequest={() => null}
+            slotProps={{
+              session_id: "ses-test-1",
+              visible: true,
+              disabled: false,
+              on_submit: mockSubmit,
+              ref: mockRef,
+            }}
+          />
+        ),
+        setup.renderer,
+      );
+
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("[AGENT: build] [MODEL: deepseek] [PROMPT INPUT]");
+      expect(frame).toContain("[RIGHT: session_prompt_right]");
+
+      expect(passedPromptProps).not.toBeNull();
+      expect(passedPromptProps.sessionID).toBe("ses-test-1");
+      expect(passedPromptProps.disabled).toBe(false);
+      expect(passedPromptProps.visible).toBe(true);
+      expect(passedPromptProps.onSubmit).toBe(mockSubmit);
+      expect(passedPromptProps.ref).toBe(mockRef);
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  test("PromptSlotWrapper disables prompt input while dialog is active", async () => {
+    const setup = await createTestRenderer({ width: 88, height: 24 });
+    let passedPromptProps: any = null;
+
+    const mockApi: any = {
+      theme: {
+        current: {
+          warning: "#f5a742",
+          text: "#eeeeee",
+          textMuted: "#808080",
+          backgroundPanel: "#141414",
+          backgroundElement: "#1e1e1e",
+        },
+      },
+      ui: {
+        Prompt: (props: any) => {
+          passedPromptProps = props;
+          return <box><text>[PROMPT AREA]</text></box>;
+        },
+      },
+      renderer: setup.renderer,
+    };
+
+    const req = {
+      ruleId: "ask:sudo",
+      reason: "elevated permissions",
+      tool: "bash",
+      command: "sudo su",
+      sessionID: "ses-active",
+    };
+
+    const activeItem: PromptSlotItem = {
+      req,
+      view: describeGuardRequest(req),
+      choices: guardChoices(),
+      settle: () => {},
+    };
+
+    try {
+      await render(
+        () => (
+          <PromptSlotWrapper
+            api={mockApi}
+            activeRequest={() => activeItem}
+            slotProps={{
+              session_id: "ses-active",
+              visible: true,
+              disabled: false,
+            }}
+          />
+        ),
+        setup.renderer,
+      );
+
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("Guardian Angel: sudo");
+      expect(frame).toContain("[PROMPT AREA]");
+      expect(passedPromptProps.disabled).toBe(true);
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
 });
