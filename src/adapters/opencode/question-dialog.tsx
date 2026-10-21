@@ -110,6 +110,87 @@ const VERTICAL_BAR_BORDER = {
 export function QuestionDialog(props: QuestionDialogProps) {
   const [selectedIndex, setSelectedIndex] = createSignal(0);
 
+  // 1. Push "question" mode so OpenCode suspends normal transcript scroll
+  // and prompt navigation bindings while this dialog is visible.
+  if (typeof props.api.mode?.push === "function") {
+    const popMode = props.api.mode.push("question");
+    onCleanup(() => {
+      popMode?.();
+    });
+  }
+
+  // 2. Register keymap layer in OpenCode's keymap system with high priority.
+  if (typeof props.api.keymap?.registerLayer === "function") {
+    const unregister = props.api.keymap.registerLayer({
+      priority: 1000,
+      mode: "question",
+      commands: [
+        {
+          name: "guardian.up",
+          title: "Select Previous Option",
+          category: "Guardian Angel",
+          run() {
+            setSelectedIndex((i) => (i <= 0 ? props.choices.length - 1 : i - 1));
+          },
+        },
+        {
+          name: "guardian.down",
+          title: "Select Next Option",
+          category: "Guardian Angel",
+          run() {
+            setSelectedIndex((i) => (i >= props.choices.length - 1 ? 0 : i + 1));
+          },
+        },
+        {
+          name: "guardian.1",
+          title: "Deny Command",
+          category: "Guardian Angel",
+          run() {
+            props.onSettle(props.choices[0]?.value ?? "deny");
+          },
+        },
+        {
+          name: "guardian.2",
+          title: "Allow Command",
+          category: "Guardian Angel",
+          run() {
+            props.onSettle(props.choices[1]?.value ?? "allow");
+          },
+        },
+        {
+          name: "guardian.confirm",
+          title: "Confirm Selected Option",
+          category: "Guardian Angel",
+          run() {
+            const chosen = props.choices[selectedIndex()];
+            props.onSettle(chosen?.value ?? "deny");
+          },
+        },
+        {
+          name: "guardian.escape",
+          title: "Dismiss and Deny",
+          category: "Guardian Angel",
+          run() {
+            props.onSettle("deny");
+          },
+        },
+      ],
+      bindings: [
+        { key: "up", cmd: "guardian.up" },
+        { key: "k", cmd: "guardian.up" },
+        { key: "down", cmd: "guardian.down" },
+        { key: "j", cmd: "guardian.down" },
+        { key: "1", cmd: "guardian.1" },
+        { key: "2", cmd: "guardian.2" },
+        { key: "return", cmd: "guardian.confirm" },
+        { key: "escape", cmd: "guardian.escape" },
+      ],
+    });
+    onCleanup(() => {
+      unregister?.();
+    });
+  }
+
   const theme = () => props.api.theme?.current ?? {
     warning: "#f5a742",
     accent: "#9d7cd8",
@@ -120,33 +201,36 @@ export function QuestionDialog(props: QuestionDialogProps) {
     border: "#484848",
   };
 
+  // 3. Fallback direct listener on keyInput for test environments and raw terminals.
   const keyInput = props.api.renderer?.keyInput;
   if (keyInput) {
     const onKeyPress = (key: any) => {
       if (!key) return;
-      const name = key.name;
-      if (name === "up" || name === "k") {
+      const name = key.name ?? key.sequence;
+      if (name === "up" || name === "k" || key.sequence === "\x1b[A") {
         setSelectedIndex((i) => (i <= 0 ? props.choices.length - 1 : i - 1));
         key.preventDefault?.();
         key.stopPropagation?.();
-      } else if (name === "down" || name === "j") {
+      } else if (name === "down" || name === "j" || key.sequence === "\x1b[B") {
         setSelectedIndex((i) => (i >= props.choices.length - 1 ? 0 : i + 1));
         key.preventDefault?.();
         key.stopPropagation?.();
-      } else if (name === "1") {
+      } else if (name === "1" || key.sequence === "1") {
         props.onSettle(props.choices[0]?.value ?? "deny");
         key.preventDefault?.();
         key.stopPropagation?.();
-      } else if (name === "2" && props.choices.length > 1) {
-        props.onSettle(props.choices[1]?.value ?? "allow");
-        key.preventDefault?.();
-        key.stopPropagation?.();
-      } else if (name === "return") {
+      } else if (name === "2" || key.sequence === "2") {
+        if (props.choices.length > 1) {
+          props.onSettle(props.choices[1]?.value ?? "allow");
+          key.preventDefault?.();
+          key.stopPropagation?.();
+        }
+      } else if (name === "return" || name === "enter" || key.sequence === "\r" || key.sequence === "\n") {
         const chosen = props.choices[selectedIndex()];
         props.onSettle(chosen?.value ?? "deny");
         key.preventDefault?.();
         key.stopPropagation?.();
-      } else if (name === "escape") {
+      } else if (name === "escape" || key.sequence === "\x1b") {
         props.onSettle("deny");
         key.preventDefault?.();
         key.stopPropagation?.();

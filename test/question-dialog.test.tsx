@@ -429,4 +429,89 @@ describe("QuestionDialog Component (OpenTUI Solid)", () => {
       setup.renderer.destroy();
     }
   });
+
+  test("QuestionDialog pushes question mode and registers keymap layer", async () => {
+    const setup = await createTestRenderer({ width: 88, height: 24 });
+    let pushedMode: string | null = null;
+    let modePopped = false;
+    let registeredLayer: any = null;
+    let layerUnregistered = false;
+    let settledDecision: string | null = null;
+
+    const mockApi: any = {
+      theme: {
+        current: {
+          warning: "#f5a742",
+          text: "#eeeeee",
+          textMuted: "#808080",
+          backgroundPanel: "#141414",
+          backgroundElement: "#1e1e1e",
+        },
+      },
+      mode: {
+        push: (m: string) => {
+          pushedMode = m;
+          return () => {
+            modePopped = true;
+          };
+        },
+      },
+      keymap: {
+        registerLayer: (layer: any) => {
+          registeredLayer = layer;
+          return () => {
+            layerUnregistered = true;
+          };
+        },
+      },
+      renderer: setup.renderer,
+    };
+
+    const req = {
+      ruleId: "ask:git-push",
+      reason: "pushing code",
+      tool: "bash",
+      command: "git push origin main",
+    };
+
+    try {
+      await render(
+        () => (
+          <QuestionDialog
+            api={mockApi}
+            view={describeGuardRequest(req)}
+            choices={guardChoices()}
+            onSettle={(d) => {
+              settledDecision = d;
+            }}
+          />
+        ),
+        setup.renderer,
+      );
+
+      await setup.renderOnce();
+
+      // Mode and keymap layer registered
+      expect(pushedMode as string | null).toBe("question");
+      expect(registeredLayer).not.toBeNull();
+      expect(registeredLayer.mode).toBe("question");
+      expect(registeredLayer.priority).toBe(1000);
+
+      // Verify commands in layer
+      const upCmd = registeredLayer.commands.find((c: any) => c.name === "guardian.up");
+      const downCmd = registeredLayer.commands.find((c: any) => c.name === "guardian.down");
+      const allowCmd = registeredLayer.commands.find((c: any) => c.name === "guardian.2");
+      expect(upCmd).toBeDefined();
+      expect(downCmd).toBeDefined();
+      expect(allowCmd).toBeDefined();
+
+      // Trigger allow command through keymap
+      allowCmd.run();
+      expect(settledDecision as string | null).toBe("allow");
+    } finally {
+      setup.renderer.destroy();
+      expect(modePopped).toBe(true);
+      expect(layerUnregistered).toBe(true);
+    }
+  });
 });
