@@ -90,32 +90,38 @@ export const GuardianAngelTui: TuiPlugin = async (
     try {
       const view = describeGuardRequest(req);
       const choices = guardChoices();
+      const body = renderGuardBody(view);
+
+      try {
+        api.ui.dialog.setSize("large");
+      } catch {
+        // ignore
+      }
 
       api.ui.dialog.replace(
         () => {
-          // Mirror OpenCode's native `question` tool: a short header, the full
-          // question as the prompt, and choices that each carry a description.
-          // DialogSelect is the closest public primitive — it renders an option
-          // list with per-choice descriptions, exactly like the question tool.
+          // Mirror OpenCode's native `question` tool: full question prompt,
+          // complete command, reason, and numbered choices with indented descriptions.
           if (typeof api.ui.DialogSelect === "function") {
             return api.ui.DialogSelect({
-              title: view.header,
-              placeholder: `${view.toolLabel}: ${view.detail}`,
+              title: `${view.header}\n\n${body}`,
+              renderFilter: false,
+              skipFilter: true,
               options: choices.map((choice) => ({
                 title: choice.label,
                 value: choice.value,
                 description: choice.description,
                 onSelect: () => settle(choice.value),
               })),
-              onSelect: (opt) => {
+              onSelect: (opt: unknown) => {
                 const val = (opt as { value?: string })?.value;
                 settle(val === "allow" ? "allow" : "deny");
               },
-            });
+            } as any);
           }
           return api.ui.DialogConfirm({
             title: view.header,
-            message: renderGuardBody(view),
+            message: body,
             onConfirm: () => settle("allow"),
             onCancel: () => settle("deny"),
           });

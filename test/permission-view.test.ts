@@ -58,7 +58,7 @@ describe("describeGuardRequest", () => {
     const label = (tool: string): string =>
       describeGuardRequest({ ruleId: "ask:x", reason: "r", tool, command: "c" }).toolLabel;
 
-    expect(label("bash")).toBe("Shell command");
+    expect(label("bash")).toBe("Command");
     expect(label("write")).toBe("Write file");
     expect(label("edit")).toBe("Edit file");
     expect(label("patch")).toBe("Patch file");
@@ -101,31 +101,31 @@ describe("describeGuardRequest", () => {
     ).toBe("(no additional detail)");
   });
 
-  test("collapses newlines so a multi-line command stays on one line", () => {
+  test("preserves multi-line commands without flattening", () => {
     const view = describeGuardRequest({
       ruleId: "ask:x",
       reason: "r",
       tool: "bash",
       command: "line one\nline two\n  line three",
     });
-    expect(view.detail).toBe("line one line two line three");
+    expect(view.detail).toBe("line one\nline two\n  line three");
   });
 
-  test("truncates a very long command with an ellipsis", () => {
+  test("caps extremely large commands at 2000 characters with an ellipsis", () => {
     const view = describeGuardRequest({
       ruleId: "ask:x",
       reason: "r",
       tool: "bash",
-      command: "a".repeat(500),
+      command: "a".repeat(2500),
     });
-    expect(view.detail.length).toBeLessThanOrEqual(120);
+    expect(view.detail.length).toBeLessThanOrEqual(2000);
     expect(view.detail.endsWith("…")).toBe(true);
   });
 });
 
 describe("guardChoices", () => {
-  test("offers exactly Deny and Allow", () => {
-    expect(guardChoices().map((c) => c.label)).toEqual(["Deny", "Allow"]);
+  test("offers exactly 1. Deny and 2. Allow", () => {
+    expect(guardChoices().map((c) => c.label)).toEqual(["1. Deny", "2. Allow"]);
   });
 
   test("puts Deny first so an accidental Enter cannot execute the command", () => {
@@ -156,8 +156,20 @@ describe("renderGuardBody", () => {
     const body = renderGuardBody(view);
 
     expect(body).toContain("Allow Guardian Angel to run this shell command?");
-    expect(body).toContain("Shell command:");
+    expect(body).toContain("Command:");
     expect(body).toContain("  git push origin main");
-    expect(body).toContain("Why: git push requires approval");
+    expect(body).toContain("Why:\n  git push requires approval");
+  });
+
+  test("indents every line of a multi-line command", () => {
+    const view = describeGuardRequest({
+      ruleId: "ask:script",
+      reason: "custom script execution",
+      tool: "bash",
+      command: "bun -e '\n  const x = 1;\n  console.log(x);\n'",
+    });
+    const body = renderGuardBody(view);
+
+    expect(body).toContain("Command:\n  bun -e '\n    const x = 1;\n    console.log(x);\n  '");
   });
 });

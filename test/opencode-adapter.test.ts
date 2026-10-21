@@ -445,7 +445,7 @@ describe("OpenCode Adapter", () => {
       const component = dialogRendered!();
       expect(component.type).toBe("select");
       expect(component.props.title).toContain("Guardian Angel: rm-outside");
-      expect(component.props.options.map((o: any) => o.title)).toEqual(["Deny", "Allow"]);
+      expect(component.props.options.map((o: any) => o.title)).toEqual(["1. Deny", "2. Allow"]);
 
       // Selecting allow option
       const allowOpt = component.props.options.find((o: any) => o.value === "allow");

@@ -27,19 +27,19 @@ export type GuardChoice = {
 };
 
 const TOOL_LABELS: Record<string, string> = {
-  bash: "Shell command",
+  bash: "Command",
   write: "Write file",
   edit: "Edit file",
   patch: "Patch file",
 };
 
 const MAX_HEADER = 30;
-const MAX_DETAIL = 120;
+const MAX_DETAIL = 2000;
 
 function truncate(text: string, max: number): string {
-  const single = text.replace(/\s+/g, " ").trim();
-  if (single.length <= max) return single;
-  return `${single.slice(0, max - 1)}…`;
+  const trimmed = text.trim();
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max - 1)}…`;
 }
 
 /** Derive the dialog header from the rule id, e.g. "ask:git-push" -> "git-push". */
@@ -70,7 +70,10 @@ export function describeGuardRequest(req: {
 
   return {
     header: headerFromRuleId(req.ruleId),
-    question: `Allow Guardian Angel to run this ${toolLabel.toLowerCase()}?`,
+    question:
+      req.tool === "bash"
+        ? "Allow Guardian Angel to run this shell command?"
+        : `Allow Guardian Angel to run this ${toolLabel.toLowerCase()}?`,
     toolLabel,
     detail,
     reason,
@@ -86,13 +89,13 @@ export function describeGuardRequest(req: {
 export function guardChoices(): GuardChoice[] {
   return [
     {
-      label: "Deny",
-      description: "Block this call (safe default, ESC also denies)",
+      label: "1. Deny",
+      description: "Block this command (safe default, ESC also denies)",
       value: "deny",
     },
     {
-      label: "Allow",
-      description: "Run it once and remember this rule for 24 hours",
+      label: "2. Allow",
+      description: "Run once and remember this rule for 24 hours",
       value: "allow",
     },
   ];
@@ -100,12 +103,17 @@ export function guardChoices(): GuardChoice[] {
 
 /** Multi-line body shown inside the dialog: question, detail, then reason. */
 export function renderGuardBody(view: GuardRequestView): string {
+  const detailIndented = view.detail
+    .split("\n")
+    .map((line) => `  ${line}`)
+    .join("\n");
   return [
     view.question,
     "",
     `${view.toolLabel}:`,
-    `  ${view.detail}`,
+    detailIndented,
     "",
-    `Why: ${view.reason}`,
+    "Why:",
+    `  ${view.reason}`,
   ].join("\n");
 }
