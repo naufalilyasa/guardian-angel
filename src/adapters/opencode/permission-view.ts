@@ -95,7 +95,7 @@ export function guardChoices(): GuardChoice[] {
     },
     {
       label: "2. Allow",
-      description: "Run once and remember this rule for 24 hours",
+      description: "Execute now and remember approval for 24 hours",
       value: "allow",
     },
   ];

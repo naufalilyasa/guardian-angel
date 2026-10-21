@@ -66,7 +66,7 @@ describe("QuestionDialog Component (OpenTUI Solid)", () => {
       expect(frame).toContain("1. Deny");
       expect(frame).toContain("Block this command (safe default, ESC also denies)");
       expect(frame).toContain("2. Allow");
-      expect(frame).toContain("Run once and remember this rule for 24 hours");
+      expect(frame).toContain("Execute now and remember approval for 24 hours");
 
       // Ensure NO search input box!
       expect(frame).not.toContain("Search");
