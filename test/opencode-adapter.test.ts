@@ -457,5 +457,52 @@ describe("OpenCode Adapter", () => {
 
       for (const cb of disposeCallbacks) cb();
     });
+
+    test("renders DialogSelect and does not discard request when deadline is 0", async () => {
+      let dialogRendered: (() => any) | null = null;
+      const disposeCallbacks: Array<() => void> = [];
+
+      const mockApi: any = {
+        ui: {
+          dialog: {
+            replace: (render: () => any) => {
+              dialogRendered = render;
+            },
+            clear: () => {},
+          },
+          DialogSelect: (props: any) => ({ type: "select", props }),
+        },
+        lifecycle: {
+          onDispose: (cb: () => void) => {
+            disposeCallbacks.push(cb);
+          },
+        },
+      };
+
+      await GuardianAngelTui(mockApi, { ipcDir }, {} as any);
+
+      const req: IpcRequest = {
+        callID: "call-tui-indefinite-test",
+        sessionID: "ses-1",
+        tool: "bash",
+        command: "git push origin main",
+        reason: "pushing to remote",
+        ruleId: "ask:git-push",
+        createdAt: Date.now(),
+        deadline: 0,
+      };
+      writeRequest(req, ipcDir);
+
+      for (let i = 0; i < 20; i++) {
+        if (dialogRendered !== null) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      expect(dialogRendered).not.toBeNull();
+      const component = dialogRendered!();
+      expect(component.props.title).toContain("Guardian Angel: git-push");
+
+      for (const cb of disposeCallbacks) cb();
+    });
   });
 });

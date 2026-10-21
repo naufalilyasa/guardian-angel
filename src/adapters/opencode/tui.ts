@@ -62,7 +62,7 @@ export const GuardianAngelTui: TuiPlugin = async (
     if (!req) return;
 
     const now = Date.now();
-    if (now >= req.deadline) {
+    if (req.deadline > 0 && now >= req.deadline) {
       // Already timed out; discard
       cleanupCall(req.callID, ipcDir);
       processNext();

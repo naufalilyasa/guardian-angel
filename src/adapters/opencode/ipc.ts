@@ -160,7 +160,7 @@ export function listPendingRequests(ipcDir = getDefaultIpcDir()): IpcRequest[] {
         try {
           const content = readFileSync(join(ipcDir, f), "utf-8");
           const parsed = JSON.parse(content) as IpcRequest;
-          if (parsed && parsed.callID && parsed.deadline) {
+          if (parsed && parsed.callID && typeof parsed.deadline === "number") {
             requests.push(parsed);
           }
         } catch {
