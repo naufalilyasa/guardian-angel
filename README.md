@@ -15,7 +15,9 @@ Mendukung **OpenCode 1.19.3** dan **Senpi / OMO Native**.
 - 🛡️ **Pencegahan Overwrite Berkas Eksisting**: Mendeteksi penimpaan file yang sudah ada di disk melalui redirection (`>`, `>>`, `>|`, `2>`), `cat /dev/null >`, `tee`, `cp`, `mv`, `install`, `sed -i`, `truncate`, dan `dd of=`.
 - 🔒 **Proteksi Imutabilitas Store**: Direktori internal `.guardian-angel/` (audit, approvals, trash) dan repositori `.git/` kebal terhadap manipulasi, penulisan, penghapusan, atau penimpaan langsung maupun lewat symlink dan compound `cd`.
 - ⏱️ **Persetujuan Granular 24 Jam**: Approval di-scope ketat per `workspace \0 session \0 path \0 ruleId`. Menyetujui `git push` tidak akan pernah membuka izin untuk `sudo`, `chmod -R`, atau `docker prune`.
-- 🕵️ **Redaksi Rahasia Otomatis**: Audit log (`audit.jsonl`) secara otomatis menyamarkan token sensitif (Bearer, API keys, password database `-p`, kredensial URL, dan secret keys).
+- 💬 **Dialog Konfirmasi Bergaya Native OpenCode**: Render inline langsung di atas prompt chip tanpa modal overlay, menggunakan OpenTUI Solid (`┃` border, tanpa input search box). Dilengkapi navigasi panah `↑`/`↓`/`j`/`k`, shortcut angka `1. Deny` / `2. Allow`, `Enter` untuk konfirmasi, dan `Esc` untuk tolak (fail-closed).
+- ⏸️ **Jeda Eksekusi Indefinite & Notifikasi Desktop**: Agen berhenti total saat menunggu persetujuan (tidak timeout prematur) disertai notifikasi desktop OS (macOS/Linux) dan chime audio TUI.
+- 🕵️ **Redaksi Rahasia & Pencatatan Rule ID**: Audit log (`audit.jsonl`) mencatat field `ruleId` eksplisit pada setiap keputusan dan menyamarkan token sensitif (Bearer, API keys, password database `-p`, kredensial URL, dan secret keys).
 - 🧩 **Anti-Evasion Parser**: Menangani wrapper shell bertingkat (`bash -c`, `eval`, `$(...)`, `<(...)`, `>(...)`, backticks, subshell majemuk), launcher flags (`env`, `nice`, `timeout`), bare shell variable indirection (`$CMD`, `${CMD}`), quote-splitting (`r'm'`, `d'd'`), serta compound directory traversal (`cd`, `pushd`).
 
 ---
@@ -42,12 +44,13 @@ Mendukung **OpenCode 1.19.3** dan **Senpi / OMO Native**.
         │  • policy.ts     (Layered Rules)  │
         └─────────┬─────────────────────────┘
                   │
-        ┌─────────┴─────────────────────────┐
-        ▼                                   ▼
- [ Ask: IPC / UI Dialog ]         [ Rewrite / Block / Allow ]
-  • OpenCode: ui.DialogConfirm     • ga trash (Undoable)
-  • Senpi:    ctx.ui.confirm       • Throw error (Blocked)
-  • 24h Approval Memory            • Audit log (audit.jsonl)
+         ┌─────────┴─────────────────────────┐
+         ▼                                   ▼
+  [ Ask: IPC / UI Dialog ]         [ Rewrite / Block / Allow ]
+   • OpenCode: Inline Question UI    • ga trash (Undoable)
+     (OpenTUI Solid above prompt)    • Throw error (Blocked)
+   • Senpi:    ctx.ui.confirm        • Audit log (audit.jsonl + ruleId)
+   • 24h Approval Memory             • Indefinite pause & OS notification
 ```
 
 > **Aturan Emas**: Modul `src/core/` adalah modul murni (pure deterministic) tanpa dependensi runtime harness.
@@ -72,15 +75,19 @@ Guardian Angel menyediakan integrasi modular untuk OpenCode:
    - Mencegat eksekusi melalui hook `tool.execute.before`.
    - Memetakan tool OpenCode (`bash`, `write`, `edit`, `patch`).
    - Mengalihkan perintah `rm` menjadi perintah `ga trash`.
-   - Mengirim permintaan konfirmasi `ask` ke TUI bridge atau fail-closed di mode headless.
+   - Mengirim permintaan konfirmasi `ask` ke TUI bridge dengan timeout indefinite (agen berhenti total sampai diputuskan), atau fail-closed seketika di mode headless.
    - Dilengkapi cache penolakan 30 detik untuk mencegah popup berulang saat agen me-retry perintah.
 
-2. **TUI Plugin** (`src/adapters/opencode/tui.ts`):
-   - Menampilkan modal native `ui.DialogConfirm` di antarmuka TUI OpenCode.
-   - Mengirim sinyal heartbeat aktif setiap 2 detik.
+2. **TUI Plugin** (`src/adapters/opencode/tui.ts` & `src/adapters/opencode/question-dialog.tsx`):
+   - Merender dialog konfirmasi inline langsung di atas prompt chip (`session_prompt` slot) tanpa modal overlay.
+   - Dibangun dengan OpenTUI Solid meniru tampilan native question OpenCode (`┃` border, header, command, reason, dan pilihan bernomor).
+   - Tanpa input search box ("Type your own answer").
+   - Navigasi keyboard terintegrasi mode `"question"` dan keymap layer OpenCode (`↑`/`↓`/`k`/`j` untuk memilih opsi, shortcut `1` / `2`, `Enter` untuk konfirmasi, dan `Esc` untuk tolak fail-closed).
+   - Memancarkan notifikasi desktop (macOS Ping notification / Linux `notify-send`) dan chime audio TUI `question`.
+   - Mengirim sinyal heartbeat aktif setiap 2 detik dan terisolasi per-workspace/sesi.
 
 3. **File-IPC Bridge** (`src/adapters/opencode/ipc.ts`):
-   - Komunikasi antar-proses aman di `/tmp/guardian-angel-ipc-<user>` (mode `0o700`).
+   - Komunikasi antar-proses aman di `/tmp/guardian-angel-ipc-<user>/<workspace-hash>` (mode `0o700`).
    - Dilengkapi cryptographic nonce acak dan izin berkas ketat (`0o600`).
 
 ### Pemasangan di OpenCode
@@ -162,7 +169,7 @@ Setiap workspace yang dilindungi memiliki direktori lokal:
 ```bash
 bun test
 ```
-*437 test passing / 0 fail / 967 expect calls / 15 test files.*
+*561 test passing / 0 fail / 1216 expect calls / 22 test files.*
 
 ### 2. Destructive 20-Case Smoke Suite
 Menguji 20 skenario destruktif nyata (quoted path `rm`, overwrite `>`, SQL multi-payload DROP, wrappers, path traversal, git clean):
