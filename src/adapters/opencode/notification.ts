@@ -22,12 +22,14 @@ export function notifyDesktop(
         stdio: "ignore",
         detached: true,
       });
+      proc.on?.("error", () => {});
       proc.unref?.();
     } else if (platform === "linux") {
       const proc = spawner("notify-send", [notification.title, notification.message], {
         stdio: "ignore",
         detached: true,
       });
+      proc.on?.("error", () => {});
       proc.unref?.();
     }
   } catch {
