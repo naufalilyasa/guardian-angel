@@ -11,7 +11,12 @@ import {
 import type { IpcRequest } from "./types.ts";
 import { describeGuardRequest, guardChoices, renderGuardBody } from "./permission-view.ts";
 import { notifyDesktop } from "./notification.ts";
-import { QuestionDialog } from "./question-dialog.tsx";
+import {
+  QuestionDialog,
+  PromptSlotWrapper,
+  type PromptSlotItem,
+} from "./question-dialog.tsx";
+import { createSignal } from "solid-js";
 
 export function getActiveSessionId(api: Partial<TuiPluginApi>): string | undefined {
   const current = api.route?.current;
@@ -51,10 +56,27 @@ export const GuardianAngelTui: TuiPlugin = async (
     writeHeartbeat(ipcDir);
   }, 2000);
 
-  // 2. Request queue and dialog management
+  // 2. Request queue, slot registration, and dialog management
   const queue: IpcRequest[] = [];
   const processedCallIds = new Set<string>();
   let showingDialog = false;
+
+  const [activeRequest, setActiveRequest] = createSignal<PromptSlotItem | null>(null);
+
+  if (typeof api.slots?.register === "function") {
+    api.slots.register({
+      order: 10,
+      slots: {
+        session_prompt(_ctx: any, slotProps: any) {
+          return PromptSlotWrapper({
+            api,
+            activeRequest,
+            slotProps,
+          });
+        },
+      },
+    });
+  }
 
   const processNext = (): void => {
     if (showingDialog || queue.length === 0) return;
@@ -81,8 +103,9 @@ export const GuardianAngelTui: TuiPlugin = async (
       settled = true;
       writeResponse(req.callID, decision, ipcDir, req.nonce);
       showingDialog = false;
+      setActiveRequest(null);
       try {
-        api.ui.dialog.clear();
+        api.ui?.dialog?.clear();
       } catch {
         // ignore
       }
@@ -109,8 +132,20 @@ export const GuardianAngelTui: TuiPlugin = async (
           .catch(() => {});
       }
 
+      // If plugin slots are available and renderer is active, render inline
+      // directly above the prompt chip/field with NO modal overlay and full content width.
+      if (typeof api.slots?.register === "function" && api.renderer) {
+        setActiveRequest({
+          req,
+          view,
+          choices,
+          settle,
+        });
+        return;
+      }
+
       try {
-        api.ui.dialog.setSize("large");
+        api.ui?.dialog?.setSize("large");
       } catch {
         // ignore
       }
@@ -158,6 +193,7 @@ export const GuardianAngelTui: TuiPlugin = async (
       );
     } catch {
       showingDialog = false;
+      setActiveRequest(null);
       cleanupCall(req.callID, ipcDir);
       processNext();
     }

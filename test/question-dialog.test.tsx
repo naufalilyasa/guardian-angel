@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "@opentui/solid";
 import { createTestRenderer } from "@opentui/core/testing";
-import { QuestionDialog } from "../src/adapters/opencode/question-dialog.js";
+import {
+  QuestionDialog,
+  PromptSlotWrapper,
+  type PromptSlotItem,
+} from "../src/adapters/opencode/question-dialog.js";
 import { describeGuardRequest, guardChoices } from "../src/adapters/opencode/permission-view.js";
 
 describe("QuestionDialog Component (OpenTUI Solid)", () => {
@@ -183,6 +187,114 @@ describe("QuestionDialog Component (OpenTUI Solid)", () => {
       // Escape -> settles 'deny'
       setup.renderer.keyInput.emit("keypress", { name: "escape" } as any);
       expect(settledDecision as string | null).toBe("deny");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  test("PromptSlotWrapper renders child only when no active request", async () => {
+    const setup = await createTestRenderer({ width: 88, height: 24 });
+    const mockApi: any = {
+      theme: {
+        current: {
+          warning: "#f5a742",
+          text: "#eeeeee",
+          textMuted: "#808080",
+          backgroundPanel: "#141414",
+          backgroundElement: "#1e1e1e",
+        },
+      },
+      renderer: setup.renderer,
+    };
+
+    try {
+      await render(
+        () => (
+          <PromptSlotWrapper
+            api={mockApi}
+            activeRequest={() => null}
+            slotProps={{
+              session_id: "ses-1",
+              children: <box><text>[PROMPT CHIP FIELD]</text></box>,
+            }}
+          />
+        ),
+        setup.renderer,
+      );
+
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("[PROMPT CHIP FIELD]");
+      expect(frame).not.toContain("Guardian Angel:");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  test("PromptSlotWrapper renders dialog directly above prompt without overlay", async () => {
+    const setup = await createTestRenderer({ width: 88, height: 24 });
+    let settledDecision: string | null = null;
+
+    const mockApi: any = {
+      theme: {
+        current: {
+          warning: "#f5a742",
+          text: "#eeeeee",
+          textMuted: "#808080",
+          backgroundPanel: "#141414",
+          backgroundElement: "#1e1e1e",
+        },
+      },
+      renderer: setup.renderer,
+    };
+
+    const req = {
+      ruleId: "ask:git-push",
+      reason: "pushing code to remote",
+      tool: "bash",
+      command: "git push origin main",
+      sessionID: "ses-1",
+    };
+    const view = describeGuardRequest(req);
+    const choices = guardChoices();
+
+    const activeItem: PromptSlotItem = {
+      req,
+      view,
+      choices,
+      settle: (decision) => {
+        settledDecision = decision;
+      },
+    };
+
+    try {
+      await render(
+        () => (
+          <PromptSlotWrapper
+            api={mockApi}
+            activeRequest={() => activeItem}
+            slotProps={{
+              session_id: "ses-1",
+              children: <box><text>[PROMPT CHIP FIELD]</text></box>,
+            }}
+          />
+        ),
+        setup.renderer,
+      );
+
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+
+      // Dialog is rendered directly above the prompt chip field!
+      expect(frame).toContain("Guardian Angel: git-push");
+      expect(frame).toContain("[PROMPT CHIP FIELD]");
+      expect(frame).toContain("1. Deny");
+      expect(frame).toContain("2. Allow");
+      expect(frame).not.toContain("Search");
+
+      // Press '2' -> settles allow
+      setup.mockInput.pressKey("2");
+      expect(settledDecision as string | null).toBe("allow");
     } finally {
       setup.renderer.destroy();
     }

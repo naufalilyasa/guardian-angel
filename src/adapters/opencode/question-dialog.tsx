@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, For } from "solid-js";
+import { createSignal, onCleanup, For, Show } from "solid-js";
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui";
 import type { GuardRequestView, GuardChoice } from "./permission-view.js";
 
@@ -7,6 +7,50 @@ export interface QuestionDialogProps {
   view: GuardRequestView;
   choices: GuardChoice[];
   onSettle: (decision: "allow" | "deny") => void;
+}
+
+export interface PromptSlotItem {
+  req: { sessionID?: string };
+  view: GuardRequestView;
+  choices: GuardChoice[];
+  settle: (decision: "allow" | "deny") => void;
+}
+
+export interface PromptSlotWrapperProps {
+  api: TuiPluginApi;
+  activeRequest: () => PromptSlotItem | null;
+  slotProps: { session_id?: string; children?: any };
+}
+
+export function PromptSlotWrapper(props: PromptSlotWrapperProps) {
+  const current = () => {
+    const item = props.activeRequest();
+    if (!item) return null;
+    if (
+      item.req.sessionID &&
+      props.slotProps.session_id &&
+      item.req.sessionID !== props.slotProps.session_id
+    ) {
+      return null;
+    }
+    return item;
+  };
+
+  return (
+    <box flexDirection="column" gap={1}>
+      <Show when={current()} fallback={<box height={0} />}>
+        {(item) => (
+          <QuestionDialog
+            api={props.api}
+            view={item().view}
+            choices={item().choices}
+            onSettle={item().settle}
+          />
+        )}
+      </Show>
+      {props.slotProps.children}
+    </box>
+  );
 }
 
 const VERTICAL_BAR_BORDER = {
