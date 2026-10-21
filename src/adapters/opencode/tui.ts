@@ -11,6 +11,7 @@ import {
 import type { IpcRequest } from "./types.ts";
 import { describeGuardRequest, guardChoices, renderGuardBody } from "./permission-view.ts";
 import { notifyDesktop } from "./notification.ts";
+import { QuestionDialog } from "./question-dialog.tsx";
 
 export function getActiveSessionId(api: Partial<TuiPluginApi>): string | undefined {
   const current = api.route?.current;
@@ -116,9 +117,17 @@ export const GuardianAngelTui: TuiPlugin = async (
 
       api.ui.dialog.replace(
         () => {
-          // Mirror OpenCode's native `question` tool: full question prompt,
-          // complete command, reason, and numbered choices with indented descriptions.
-          if (typeof api.ui.DialogSelect === "function") {
+          // In full OpenCode TUI, render the native question-style dialog
+          // using OpenTUI Solid with no search box and direct keyboard navigation.
+          if (api.renderer) {
+            return QuestionDialog({
+              api,
+              view,
+              choices,
+              onSettle: settle,
+            });
+          }
+          if (typeof api.ui?.DialogSelect === "function") {
             return api.ui.DialogSelect({
               title: `${view.header}\n\n${body}`,
               renderFilter: false,

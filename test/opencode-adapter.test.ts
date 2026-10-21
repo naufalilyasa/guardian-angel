@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { render } from "@opentui/solid";
+import { createTestRenderer } from "@opentui/core/testing";
 import {
   clearDenialCache,
   createHookHandler,
@@ -503,6 +505,84 @@ describe("OpenCode Adapter", () => {
       expect(component.props.title).toContain("Guardian Angel: git-push");
 
       for (const cb of disposeCallbacks) cb();
+    });
+
+    test("renders OpenTUI QuestionDialog when api.renderer is available", async () => {
+      const setup = await createTestRenderer({ width: 88, height: 24 });
+      let dialogRendered: (() => any) | null = null;
+      let dialogCleared = false;
+      const disposeCallbacks: Array<() => void> = [];
+
+      const mockApi: any = {
+        renderer: setup.renderer,
+        theme: {
+          current: {
+            warning: "#f5a742",
+            text: "#eeeeee",
+            textMuted: "#808080",
+            backgroundPanel: "#141414",
+            backgroundElement: "#1e1e1e",
+          },
+        },
+        ui: {
+          dialog: {
+            replace: (r: () => any) => {
+              dialogRendered = r;
+            },
+            clear: () => {
+              dialogCleared = true;
+            },
+            setSize: () => {},
+          },
+        },
+        lifecycle: {
+          onDispose: (cb: () => void) => {
+            disposeCallbacks.push(cb);
+          },
+        },
+      };
+
+      try {
+        await GuardianAngelTui(mockApi, { ipcDir }, {} as any);
+
+        const req: IpcRequest = {
+          callID: "call-tui-renderer-test",
+          sessionID: "ses-1",
+          tool: "bash",
+          command: "git push origin main",
+          reason: "pushing code to remote",
+          ruleId: "ask:git-push",
+          createdAt: Date.now(),
+          deadline: 0,
+        };
+        writeRequest(req, ipcDir);
+
+        for (let i = 0; i < 20; i++) {
+          if (dialogRendered !== null) break;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+
+        expect(dialogRendered).not.toBeNull();
+
+        await render(dialogRendered!, setup.renderer);
+        await setup.renderOnce();
+
+        const frame = setup.captureCharFrame();
+        expect(frame).toContain("Guardian Angel: git-push");
+        expect(frame).toContain("Allow Guardian Angel to run this shell command?");
+        expect(frame).not.toContain("Search");
+
+        // Keypress '1' -> Deny
+        setup.mockInput.pressKey("1");
+        expect(dialogCleared).toBe(true);
+
+        const response = readResponse("call-tui-renderer-test", ipcDir);
+        expect(response?.decision).toBe("deny");
+
+        for (const cb of disposeCallbacks) cb();
+      } finally {
+        setup.renderer.destroy();
+      }
     });
   });
 });
