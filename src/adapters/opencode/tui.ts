@@ -10,6 +10,7 @@ import {
 } from "./ipc.ts";
 import type { IpcRequest } from "./types.ts";
 import { describeGuardRequest, guardChoices, renderGuardBody } from "./permission-view.ts";
+import { notifyDesktop } from "./notification.ts";
 
 export function getActiveSessionId(api: Partial<TuiPluginApi>): string | undefined {
   const current = api.route?.current;
@@ -91,6 +92,21 @@ export const GuardianAngelTui: TuiPlugin = async (
       const view = describeGuardRequest(req);
       const choices = guardChoices();
       const body = renderGuardBody(view);
+
+      notifyDesktop({
+        title: view.header,
+        message: `${view.toolLabel}: ${view.detail}`,
+      });
+
+      if (api.attention?.notify) {
+        api.attention
+          .notify({
+            title: view.header,
+            message: `${view.toolLabel}: ${view.detail}`,
+            sound: { name: "question" },
+          })
+          .catch(() => {});
+      }
 
       try {
         api.ui.dialog.setSize("large");

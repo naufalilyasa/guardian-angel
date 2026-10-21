@@ -98,6 +98,27 @@ describe("OpenCode IPC bridge", () => {
     expect(res).toBeNull();
   });
 
+  test("waitForResponse with deadline 0 waits until response is written when TUI is active", async () => {
+    const callID = "call-indefinite-1";
+    writeHeartbeat(testIpcDir);
+
+    setTimeout(() => {
+      writeResponse(callID, "allow", testIpcDir);
+    }, 100);
+
+    const res = await waitForResponse(callID, 0, testIpcDir, 25);
+    expect(res).not.toBeNull();
+    expect(res?.decision).toBe("allow");
+  });
+
+  test("waitForResponse with deadline 0 returns null when TUI is not active", async () => {
+    const callID = "call-indefinite-2";
+    removeHeartbeat(testIpcDir);
+
+    const res = await waitForResponse(callID, 0, testIpcDir, 25);
+    expect(res).toBeNull();
+  });
+
   test("cleanupStale removes old files", async () => {
     const req: IpcRequest = {
       callID: "call-stale",

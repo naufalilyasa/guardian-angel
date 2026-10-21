@@ -136,7 +136,7 @@ async function requestTuiApproval(
   timeoutMs: number,
   nowFn: () => number,
 ): Promise<{ approved: boolean; denialReason?: ConfirmDenialReason }> {
-  const deadline = nowFn() + timeoutMs;
+  const deadline = timeoutMs > 0 ? nowFn() + timeoutMs : 0;
   const req: IpcRequest = {
     callID: input.callID,
     sessionID: input.sessionID,
@@ -210,7 +210,7 @@ async function executeHookLogic(
   if (!call) return;
 
   const nowFn = deps.now ?? Date.now;
-  const timeoutMs = deps.confirmTimeoutMs ?? 60_000;
+  const timeoutMs = deps.confirmTimeoutMs ?? 0;
   const ipcDir = deps.ipcDir ?? getWorkspaceIpcDir(deps.workspace);
   const workspace = deps.workspace;
   const sessionId = input.sessionID || "unknown-session";
@@ -276,7 +276,7 @@ export const GuardianAngelServer: Plugin = async (
     workspace,
     pkgRoot,
     ipcDir: options?.ipcDir as string | undefined,
-    confirmTimeoutMs: (options?.confirmTimeoutMs as number) ?? 60_000,
+    confirmTimeoutMs: (options?.confirmTimeoutMs as number) ?? 0,
   });
 
   return {

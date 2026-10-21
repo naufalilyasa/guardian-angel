@@ -209,13 +209,17 @@ export async function waitForResponse(
   pollIntervalMs = 150,
   expectedNonce?: string,
 ): Promise<IpcResponse | null> {
-  while (Date.now() < deadline) {
+  while (deadline === 0 || Date.now() < deadline) {
     const res = readResponse(callID, ipcDir);
     if (res) {
       if (expectedNonce && res.nonce !== expectedNonce) {
         return null;
       }
       return res;
+    }
+    // Fail-closed safety: if waiting indefinitely and TUI is no longer active, stop waiting
+    if (deadline === 0 && !isTuiActive(ipcDir)) {
+      return null;
     }
     await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
