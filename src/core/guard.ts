@@ -138,7 +138,7 @@ function classifyWithPolicy(call: ToolCall, deps: GuardDeps): GuardResult {
 function handleClassifierError(call: ToolCall, deps: GuardDeps, error: unknown): GuardResult {
   const command = typeof call.input?.command === "string" ? call.input.command : "";
   const destructive = DESTRUCTIVE_FALLBACK.test(command);
-  const tier: Tier = destructive ? "block" : "allow";
+  const tier: Tier = destructive ? "block" : "ask";
   const reason = `classifier_error: ${(error as Error).message}`;
 
   deps.audit.append({
@@ -152,7 +152,7 @@ function handleClassifierError(call: ToolCall, deps: GuardDeps, error: unknown):
 
   return {
     verdict: tier,
-    reason: destructive ? `${reason} (fail-closed: pola destruktif)` : `${reason} (fail-open)`,
+    reason: destructive ? `${reason} (fail-closed: destructive pattern)` : `${reason} (fail-closed: approval required)`,
   };
 }
 
@@ -270,7 +270,7 @@ export async function guard(
   try {
     result = classifyWithPolicy(call, deps);
   } catch (error) {
-    return handleClassifierError(call, deps, error);
+    result = handleClassifierError(call, deps, error);
   }
 
   const now = deps.now();

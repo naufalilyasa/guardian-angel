@@ -34,9 +34,13 @@ export const GuardianAngelTui: TuiPlugin = async (
   const ipcDir = (options?.ipcDir as string) ?? getWorkspaceIpcDir(workspace);
 
   // 1. Initial heartbeat and periodic renewal
-  writeHeartbeat(ipcDir);
-  const heartbeatTimer = setInterval(() => {
+  try {
     writeHeartbeat(ipcDir);
+  } catch {}
+  const heartbeatTimer = setInterval(() => {
+    try {
+      writeHeartbeat(ipcDir);
+    } catch {}
   }, 2000);
 
   // 2. Request queue, slot registration, and dialog management
@@ -195,7 +199,10 @@ export const GuardianAngelTui: TuiPlugin = async (
     for (const req of pending) {
       if (!shouldHandleRequest(req, activeSessionId, api)) continue;
       if (!processedCallIds.has(req.callID)) {
-        if (processedCallIds.size > 1000) processedCallIds.clear();
+        if (processedCallIds.size > 1000) {
+          const oldestKey = processedCallIds.values().next().value;
+          if (oldestKey) processedCallIds.delete(oldestKey);
+        }
         processedCallIds.add(req.callID);
         queue.push(req);
       }

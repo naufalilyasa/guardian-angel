@@ -48,6 +48,9 @@ export function ensureIpcDir(ipcDir = getDefaultIpcDir()): string {
     if (stat.isSymbolicLink()) {
       throw new Error(`[guardian-angel] insecure IPC directory: symlink detected at ${ipcDir}`);
     }
+    if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
+      throw new Error(`[guardian-angel] insecure IPC directory: ownership mismatch at ${ipcDir}`);
+    }
     try {
       chmodSync(ipcDir, 0o700);
     } catch {}

@@ -43,6 +43,7 @@ const ASK_PATTERNS: Array<{ id: string; re: RegExp; reason: string }> = [
   { id: "ask:sudo", re: /(^|[\s;|&(])sudo([\s;)|]|$)/, reason: "sudo requires approval" },
   { id: "ask:git-push", re: /(^|[\s;|&(])git\s+push\b/, reason: "git push requires approval" },
   { id: "ask:git-clean", re: /(^|[\s;|&(])git\s+clean\b/, reason: "git clean removes untracked files and requires approval" },
+  { id: "ask:git-reset-hard", re: /(^|[\s;|&(])git\s+reset\s+--hard\b/, reason: "git reset --hard permanently discards working tree changes and requires approval" },
   { id: "ask:chmod-recursive", re: /(^|[\s;|&(])ch(mod|own)\s+-R\b/, reason: "recursive permission changes require approval" },
   { id: "ask:kill-all", re: /(^|[\s;|&(])kill\s+-9\s+-1([\s;)|]|$)/, reason: "killing all processes requires approval" },
   { id: "ask:docker-prune", re: /(^|[\s;|&(])docker\s+system\s+prune\b/, reason: "docker system prune requires approval" },
@@ -841,7 +842,7 @@ const WRITE_VERBS = new Set([
  * path through (e.g. `ln -sf x .git/config`).
  */
 const PRECISE_TARGET_VERBS = new Set([
-  "tee", "cp", "mv", "install", "truncate", "dd", "sed", "sort", "curl", "wget", "scp", "rsync", "tar", "unzip", "ln",
+  "tee", "cp", "mv", "install", "truncate", "dd", "sed", "sort", "curl", "wget", "scp", "rsync", "tar", "unzip", "ln", "patch",
 ]);
 
 function readTargetToken(
@@ -1065,7 +1066,7 @@ function isSink(target: string): boolean {
 }
 
 const WRITE_OVERWRITE_VERBS = new Set([
-  "cp", "mv", "install", "tee", "sed", "truncate", "dd", "sort", "curl", "wget", "scp", "rsync", "tar", "unzip", "ln",
+  "cp", "mv", "install", "tee", "sed", "truncate", "dd", "sort", "curl", "wget", "scp", "rsync", "tar", "unzip", "ln", "patch",
 ]);
 
 function extractSedTargets(args: string[]): string[] {
@@ -1180,6 +1181,16 @@ function extractVerbTargets(verb: string, args: string[]): { targets: string[]; 
     const nonFlags = args.filter((t) => !t.startsWith("-"));
     if (nonFlags.length >= 2) return { targets: [nonFlags[nonFlags.length - 1]], srcPaths: nonFlags.slice(0, -1) };
     if (nonFlags.length === 1) return { targets: [nonFlags[0]] };
+    return { targets: [] };
+  }
+  if (verb === "patch") {
+    const dIdx = args.findIndex((t) => t === "-d" || t === "--directory");
+    if (dIdx !== -1 && dIdx + 1 < args.length) return { targets: [args[dIdx + 1]] };
+    const dEq = args.find((t) => t.startsWith("--directory=") || (t.startsWith("-d") && t.length > 2));
+    if (dEq) {
+      const val = dEq.startsWith("-d") ? dEq.slice(2) : dEq.slice("--directory=".length);
+      return { targets: [val] };
+    }
     return { targets: [] };
   }
   return { targets: [] };
@@ -1498,6 +1509,20 @@ function classifyCommand(
             reason: `executing a command through a variable or substitution (${tokens[0]}) requires approval`,
             ruleId: "ask:variable-command",
           };
+        }
+      }
+      // Gate dynamic substitutions inside shell invocations (e.g. bash -c "$(base64 -d ...)")
+      const prog = stripQuotes(head.split("/").pop() ?? "").toLowerCase();
+      if (SHELLS.has(prog)) {
+        for (let i = 1; i < tokens.length; i++) {
+          const tok = unquote(tokens[i]);
+          if (/\$\([^)]+\)|`[^`]+`/.test(tok)) {
+            return {
+              verdict: "ask",
+              reason: `dynamic command substitution inside shell wrapper (${tokens[i].slice(0, 40)}) requires approval`,
+              ruleId: "ask:variable-command",
+            };
+          }
         }
       }
     }

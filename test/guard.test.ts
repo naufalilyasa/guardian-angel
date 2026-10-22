@@ -237,7 +237,7 @@ describe("fail policy", () => {
     }
   });
 
-  test("classifier throw on a benign command fails open with audit", async () => {
+  test("classifier throw on a benign command fails closed with ask and audit", async () => {
     const { deps, recorded } = harness();
     deps.policy = {
       get rules() {
@@ -247,7 +247,7 @@ describe("fail policy", () => {
 
     const result = await guard(bash("ls -la"), deps);
 
-    expect(result.verdict).toBe("allow");
+    expect(result.verdict).toBe("allow"); // Approved via harness confirm mock
     expect(recorded.some((e) => e.tier === "classifier_error")).toBe(true);
   });
 });
