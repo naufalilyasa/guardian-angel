@@ -29,6 +29,11 @@ const BLOCK_PATTERNS: Array<{ id: string; re: RegExp; reason: string }> = [
     reason: "executing inside a protected directory (.guardian-angel or .git) is blocked",
   },
   {
+    id: "block:protected-git-dir",
+    re: /(^|[\s;&|('"`])git\s+[^\n]*?(--git-dir[=\s]|-C\s*)['"]?[^\s'"]*\.git\b/i,
+    reason: "operating directly inside .git via git flags is blocked",
+  },
+  {
     id: "block:protected-rm", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?(rm|unlink|shred)\b[^\n]*\.(guardian-angel|git)\b/, reason: "deleting a protected directory (.guardian-angel or .git) is blocked" },
   { id: "block:git-clean-ignored", re: /(^|[\s;|&(])git\s+clean\b[^\n]*\s-[^\n]*[xX]/, reason: "git clean dengan flag -x/-X menghapus ignored files termasuk store dan is blocked" },
   { id: "block:mkfs", re: /(^|[\s;|&(])mkfs(\.[a-z0-9]+)?([\s;)|]|$)/, reason: "mkfs formats a filesystem and is blocked" },
@@ -44,6 +49,7 @@ const ASK_PATTERNS: Array<{ id: string; re: RegExp; reason: string }> = [
   { id: "ask:git-push", re: /(^|[\s;|&(])git\s+push\b/, reason: "git push requires approval" },
   { id: "ask:git-clean", re: /(^|[\s;|&(])git\s+clean\b/, reason: "git clean removes untracked files and requires approval" },
   { id: "ask:git-reset-hard", re: /(^|[\s;|&(])git\s+reset\s+--hard\b/, reason: "git reset --hard permanently discards working tree changes and requires approval" },
+  { id: "ask:git-destructive", re: /(^|[\s;|&(])git\s+[^\n]*\b(update-ref\s+-d|reflog\s+expire|gc\s+--prune|filter-branch|filter-repo)\b/, reason: "destructive git history or ref manipulation requires approval" },
   { id: "ask:chmod-recursive", re: /(^|[\s;|&(])ch(mod|own)\s+-R\b/, reason: "recursive permission changes require approval" },
   { id: "ask:kill-all", re: /(^|[\s;|&(])kill\s+-9\s+-1([\s;)|]|$)/, reason: "killing all processes requires approval" },
   { id: "ask:docker-prune", re: /(^|[\s;|&(])docker\s+system\s+prune\b/, reason: "docker system prune requires approval" },
@@ -202,7 +208,7 @@ const LAUNCHERS = new Set([
 ]);
 
 /** Command substitution: `$(...)` and backticks (global match). */
-const SUBSTITUTION = /(?:[\$<>]\(([^()]*(?:\([^()]*\)[^()]*)*)\)|`([^`]*)`)/g;
+const SUBSTITUTION = /(?:[\$<>]\(([^()]+)\)|`([^`]*)`)/g;
 
 /** Strip quotes and backslashes from command words and tokens. */
 export function stripQuotes(token: string): string {
@@ -286,7 +292,8 @@ function stripLaunchers(tokens: string[]): { tokens: string[]; hitLimit: boolean
  * Arithmetic expansion `$(( ... ))` is skipped for the same reason: it evaluates
  * numbers, never a command word.
  */
-function extractParenGroups(str: string): string[] {
+function extractParenGroups(str: string, currentDepth = 0): string[] {
+  if (currentDepth > 10) return [];
   const groups: string[] = [];
   let depth = 0;
   let start = -1;
@@ -337,7 +344,7 @@ function extractParenGroups(str: string): string[] {
         if (inner) {
           groups.push(inner);
           if (inner.includes("(")) {
-            groups.push(...extractParenGroups(inner));
+            groups.push(...extractParenGroups(inner, currentDepth + 1));
           }
         }
         start = -1;

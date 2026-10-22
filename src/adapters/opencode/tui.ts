@@ -185,10 +185,7 @@ export const GuardianAngelTui: TuiPlugin = async (
         () => settle("deny"),
       );
     } catch {
-      showingDialog = false;
-      setActiveRequest(null);
-      cleanupCall(req.callID, ipcDir);
-      processNext();
+      settle("deny");
     }
   };
 

@@ -6,7 +6,7 @@ import { extractPath, resolveLexical } from "./paths.ts";
 import { scopeKey } from "./approvals.ts";
 
 const DESTRUCTIVE_FALLBACK =
-  /(\brm\s+(-{1,2}[a-zA-Z-]+\s+)*[^-\s]|\bshred\b|\bmkfs\b|\bdd\b[^\n]*of=\/dev\/|\bfind\b[^\n]*-delete\b|\bDROP\s|\bTRUNCATE\s|\bALTER\s|\bcurl\b[^\n]*\|\s*(sh|bash)|\bwget\b[^\n]*\|\s*(sh|bash)|:\s*\(\s*\)\s*\{|\.(?:guardian-angel|git)\b)/i;
+  /(\brm\s+(?:--?[a-zA-Z][a-zA-Z0-9-]*\s+)*[^-\s]|\bshred\b|\bmkfs\b|\bdd\b[^\n]*of=\/dev\/|\bfind\b[^\n]*-delete\b|\bDROP\s|\bTRUNCATE\s|\bALTER\s|\bcurl\b[^\n]*\|\s*(sh|bash)|\bwget\b[^\n]*\|\s*(sh|bash)|:\s*\(\s*\)\s*\{|\.(?:guardian-angel|git)\b)/i;
 
 const SEVERITY: Record<Tier, number> = { allow: 0, ask: 1, block: 2 };
 

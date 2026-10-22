@@ -1175,5 +1175,18 @@ describe("REGRESSION: overwrite detection and tool path normalization", () => {
     const elapsed = performance.now() - t0;
     expect(res.verdict).toBe("block");
     expect(elapsed).toBeLessThan(50); // Linear scan completes in under 50ms (previously took >3500ms)
+
+    // 5. git plumbing and --git-dir protection
+    expect(classify({ call: { toolName: "bash", input: { command: "git --git-dir=.git update-ref -d refs/heads/main" } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: "git -C .git status" } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: "git update-ref -d refs/heads/main" } }, workspace: ws }).verdict).toBe("ask");
+    expect(classify({ call: { toolName: "bash", input: { command: "git reflog expire --expire=now --all" } }, workspace: ws }).verdict).toBe("ask");
+    expect(classify({ call: { toolName: "bash", input: { command: "git gc --prune=now" } }, workspace: ws }).verdict).toBe("ask");
+    expect(classify({ call: { toolName: "bash", input: { command: "git filter-branch --tree-filter rm -f" } }, workspace: ws }).verdict).toBe("ask");
+    expect(classify({ call: { toolName: "bash", input: { command: "git status" } }, workspace: ws }).verdict).toBe("allow");
+
+    // 6. Deeply nested parenthesis recursion limit fails safe without stack overflow
+    const deepParens = "(".repeat(100) + "echo hi" + ")".repeat(100);
+    expect(classify({ call: { toolName: "bash", input: { command: deepParens } }, workspace: ws }).verdict).toBe("ask");
   });
 });
