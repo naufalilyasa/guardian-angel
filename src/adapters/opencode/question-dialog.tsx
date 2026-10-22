@@ -111,6 +111,13 @@ const VERTICAL_BAR_BORDER = {
 
 export function QuestionDialog(props: QuestionDialogProps) {
   const [selectedIndex, setSelectedIndex] = createSignal(0);
+  const [expanded, setExpanded] = createSignal(false);
+  let scrollboxRef: any = null;
+
+  const detailLines = () => props.view.detail.split("\n");
+  const isExpandable = () => detailLines().length > 3 || props.view.detail.length > 180;
+  const compactHeight = () => Math.min(Math.max(detailLines().length, 1), 3);
+  const expandedHeight = () => Math.min(Math.max(detailLines().length, 1), 12);
 
   // 1. Push "question" mode so OpenCode suspends normal transcript scroll
   // and prompt navigation bindings while this dialog is visible.
@@ -141,6 +148,32 @@ export function QuestionDialog(props: QuestionDialogProps) {
           category: "Guardian Angel",
           run() {
             setSelectedIndex((i) => (i >= props.choices.length - 1 ? 0 : i + 1));
+          },
+        },
+        {
+          name: "guardian.tab",
+          title: "Toggle Command Expansion",
+          category: "Guardian Angel",
+          run() {
+            if (isExpandable()) {
+              setExpanded((v) => !v);
+            }
+          },
+        },
+        {
+          name: "guardian.scroll_up",
+          title: "Scroll Command Up",
+          category: "Guardian Angel",
+          run() {
+            scrollboxRef?.scrollBy?.(-2);
+          },
+        },
+        {
+          name: "guardian.scroll_down",
+          title: "Scroll Command Down",
+          category: "Guardian Angel",
+          run() {
+            scrollboxRef?.scrollBy?.(2);
           },
         },
         {
@@ -182,6 +215,9 @@ export function QuestionDialog(props: QuestionDialogProps) {
         { key: "k", cmd: "guardian.up" },
         { key: "down", cmd: "guardian.down" },
         { key: "j", cmd: "guardian.down" },
+        { key: "tab", cmd: "guardian.tab" },
+        { key: "pageup", cmd: "guardian.scroll_up" },
+        { key: "pagedown", cmd: "guardian.scroll_down" },
         { key: "1", cmd: "guardian.1" },
         { key: "2", cmd: "guardian.2" },
         { key: "return", cmd: "guardian.confirm" },
@@ -227,6 +263,20 @@ export function QuestionDialog(props: QuestionDialogProps) {
           key.preventDefault?.();
           key.stopPropagation?.();
         }
+      } else if (name === "tab" || key.sequence === "\t") {
+        if (isExpandable()) {
+          setExpanded((v) => !v);
+        }
+        key.preventDefault?.();
+        key.stopPropagation?.();
+      } else if (name === "pageup" || (key.shift && (name === "up" || key.sequence === "\x1b[1;2A"))) {
+        scrollboxRef?.scrollBy?.(-2);
+        key.preventDefault?.();
+        key.stopPropagation?.();
+      } else if (name === "pagedown" || (key.shift && (name === "down" || key.sequence === "\x1b[1;2B"))) {
+        scrollboxRef?.scrollBy?.(2);
+        key.preventDefault?.();
+        key.stopPropagation?.();
       } else if (name === "return" || name === "enter" || key.sequence === "\r" || key.sequence === "\n") {
         const chosen = props.choices[selectedIndex()];
         props.onSettle(chosen?.value ?? "deny");
@@ -277,9 +327,37 @@ export function QuestionDialog(props: QuestionDialogProps) {
       </box>
 
       {/* Command / Target detail */}
-      <box paddingLeft={2} flexDirection="column">
-        <text fg={theme().textMuted}>{props.view.toolLabel}:</text>
-        <text fg={theme().text}>{props.view.detail}</text>
+      <box paddingLeft={2} flexDirection="column" gap={0}>
+        <box flexDirection="row" justifyContent="space-between" flexShrink={0}>
+          <text fg={theme().textMuted}>{props.view.toolLabel}:</text>
+          <Show
+            when={isExpandable()}
+            fallback={<box width={0} height={0} />}
+          >
+            <box
+              onMouseUp={() => setExpanded((v) => !v)}
+              flexShrink={0}
+            >
+              <Show
+                when={expanded()}
+                fallback={<text fg={theme().warning}>[tab expand]</text>}
+              >
+                <text fg={theme().warning}>[tab collapse]</text>
+              </Show>
+            </box>
+          </Show>
+        </box>
+        <scrollbox
+          ref={(el: any) => {
+            scrollboxRef = el;
+          }}
+          height={expanded() ? expandedHeight() : compactHeight()}
+          maxHeight={expanded() ? 12 : 3}
+          scrollY={true}
+          scrollX={false}
+        >
+          <text fg={theme().text}>{props.view.detail}</text>
+        </scrollbox>
       </box>
 
       {/* Reason block */}
@@ -342,6 +420,25 @@ export function QuestionDialog(props: QuestionDialogProps) {
           <text fg={theme().text}>
             enter <span style={{ fg: theme().textMuted }}>confirm</span>
           </text>
+          <Show
+            when={isExpandable()}
+            fallback={<box width={0} height={0} />}
+          >
+            <box flexShrink={0}>
+              <Show
+                when={expanded()}
+                fallback={
+                  <text fg={theme().text}>
+                    tab <span style={{ fg: theme().textMuted }}>expand</span>
+                  </text>
+                }
+              >
+                <text fg={theme().text}>
+                  tab <span style={{ fg: theme().textMuted }}>collapse</span>
+                </text>
+              </Show>
+            </box>
+          </Show>
         </box>
         <box flexDirection="row" gap={2}>
           <text fg={theme().text}>

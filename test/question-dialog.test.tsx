@@ -501,9 +501,23 @@ describe("QuestionDialog Component (OpenTUI Solid)", () => {
       const upCmd = registeredLayer.commands.find((c: any) => c.name === "guardian.up");
       const downCmd = registeredLayer.commands.find((c: any) => c.name === "guardian.down");
       const allowCmd = registeredLayer.commands.find((c: any) => c.name === "guardian.2");
+      const tabCmd = registeredLayer.commands.find((c: any) => c.name === "guardian.tab");
+      const scrollUpCmd = registeredLayer.commands.find((c: any) => c.name === "guardian.scroll_up");
+      const scrollDownCmd = registeredLayer.commands.find((c: any) => c.name === "guardian.scroll_down");
       expect(upCmd).toBeDefined();
       expect(downCmd).toBeDefined();
       expect(allowCmd).toBeDefined();
+      expect(tabCmd).toBeDefined();
+      expect(scrollUpCmd).toBeDefined();
+      expect(scrollDownCmd).toBeDefined();
+
+      // Verify key bindings for navigation and expansion
+      const tabBinding = registeredLayer.bindings.find((b: any) => b.key === "tab");
+      const pageUpBinding = registeredLayer.bindings.find((b: any) => b.key === "pageup");
+      const pageDownBinding = registeredLayer.bindings.find((b: any) => b.key === "pagedown");
+      expect(tabBinding?.cmd).toBe("guardian.tab");
+      expect(pageUpBinding?.cmd).toBe("guardian.scroll_up");
+      expect(pageDownBinding?.cmd).toBe("guardian.scroll_down");
 
       // Trigger allow command through keymap
       allowCmd.run();
@@ -512,6 +526,109 @@ describe("QuestionDialog Component (OpenTUI Solid)", () => {
       setup.renderer.destroy();
       expect(modePopped).toBe(true);
       expect(layerUnregistered).toBe(true);
+    }
+  });
+
+  test("renders compact scrollbox with tab expand hint for long commands", async () => {
+    const setup = await createTestRenderer({ width: 88, height: 30 });
+
+    const mockApi: any = {
+      theme: {
+        current: {
+          warning: "#f5a742",
+          text: "#eeeeee",
+          textMuted: "#808080",
+          backgroundPanel: "#141414",
+          backgroundElement: "#1e1e1e",
+        },
+      },
+      renderer: setup.renderer,
+    };
+
+    const longCmd = [
+      "python3 -c '",
+      "import json",
+      "d = json.load(open(\"config.json\"))",
+      "for item in d[\"items\"]:",
+      "    print(item[\"name\"], item[\"version\"])",
+      "'",
+    ].join("\n");
+
+    const req = {
+      ruleId: "ask:interpreter-inline",
+      reason: "inline interpreter code cannot be inspected",
+      tool: "bash",
+      command: longCmd,
+    };
+
+    try {
+      await render(
+        () => (
+          <QuestionDialog
+            api={mockApi}
+            view={describeGuardRequest(req)}
+            choices={guardChoices()}
+            onSettle={() => {}}
+          />
+        ),
+        setup.renderer,
+      );
+
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+
+      // Long command is compact initially with expand hint
+      expect(frame).toContain("[tab expand]");
+      expect(frame).toContain("tab expand");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  test("does not show expand hint for short single-line commands", async () => {
+    const setup = await createTestRenderer({ width: 88, height: 24 });
+
+    const mockApi: any = {
+      theme: {
+        current: {
+          warning: "#f5a742",
+          text: "#eeeeee",
+          textMuted: "#808080",
+          backgroundPanel: "#141414",
+          backgroundElement: "#1e1e1e",
+        },
+      },
+      renderer: setup.renderer,
+    };
+
+    const req = {
+      ruleId: "ask:git-push",
+      reason: "pushing code",
+      tool: "bash",
+      command: "git push origin main",
+    };
+
+    try {
+      await render(
+        () => (
+          <QuestionDialog
+            api={mockApi}
+            view={describeGuardRequest(req)}
+            choices={guardChoices()}
+            onSettle={() => {}}
+          />
+        ),
+        setup.renderer,
+      );
+
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+
+      // Single line command does not show expand hint
+      expect(frame).not.toContain("[tab expand]");
+      expect(frame).not.toContain("tab expand");
+    } finally {
+      setup.renderer.destroy();
     }
   });
 });
