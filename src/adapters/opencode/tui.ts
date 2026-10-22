@@ -18,25 +18,8 @@ import {
 } from "./question-dialog.tsx";
 import { createSignal } from "solid-js";
 
-export function getActiveSessionId(api: Partial<TuiPluginApi>): string | undefined {
-  const current = api.route?.current;
-  if (
-    current &&
-    current.name === "session" &&
-    typeof (current as { params?: { sessionID?: unknown } }).params?.sessionID === "string"
-  ) {
-    return (current as { params: { sessionID: string } }).params.sessionID;
-  }
-  return undefined;
-}
-
-export function shouldHandleRequest(
-  req: { sessionID: string },
-  activeSessionId: string | undefined,
-): boolean {
-  if (!activeSessionId) return true;
-  return req.sessionID === activeSessionId;
-}
+export { getActiveSessionId, shouldHandleRequest } from "./session-routing.ts";
+import { getActiveSessionId, shouldHandleRequest } from "./session-routing.ts";
 
 export const GuardianAngelTui: TuiPlugin = async (
   api: TuiPluginApi,
@@ -113,7 +96,13 @@ export const GuardianAngelTui: TuiPlugin = async (
     };
 
     try {
-      const view = describeGuardRequest(req);
+      const subagent = api.state?.session?.get?.(req.sessionID) as
+        | { title?: string; parentID?: string }
+        | undefined;
+      const subagentTitle = subagent?.parentID && subagent.title ? subagent.title : undefined;
+      const view = describeGuardRequest(
+        subagentTitle ? { ...req, reason: `${req.reason} [${subagentTitle}]` } : req,
+      );
       const choices = guardChoices();
       const body = renderGuardBody(view);
 
@@ -204,7 +193,7 @@ export const GuardianAngelTui: TuiPlugin = async (
     const activeSessionId = getActiveSessionId(api);
     const pending = listPendingRequests(ipcDir);
     for (const req of pending) {
-      if (!shouldHandleRequest(req, activeSessionId)) continue;
+      if (!shouldHandleRequest(req, activeSessionId, api)) continue;
       if (!processedCallIds.has(req.callID)) {
         if (processedCallIds.size > 1000) processedCallIds.clear();
         processedCallIds.add(req.callID);

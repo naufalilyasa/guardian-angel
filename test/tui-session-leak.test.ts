@@ -100,6 +100,49 @@ describe("TUI Session Isolation & Routing (TDD)", () => {
     test("allows request when activeSessionId is undefined (fallback / tests)", () => {
       expect(shouldHandleRequest({ sessionID: "ses-any" }, undefined)).toBe(true);
     });
+
+    test("allows request when req.sessionID is a child/subagent of activeSessionId", () => {
+      const mockApi: any = {
+        state: {
+          session: {
+            get: (id: string) => {
+              if (id === "ses-child") return { id: "ses-child", parentID: "ses-active" };
+              return undefined;
+            },
+          },
+        },
+      };
+      expect(shouldHandleRequest({ sessionID: "ses-child" }, "ses-active", mockApi)).toBe(true);
+    });
+
+    test("allows request when req.sessionID is a grandchild of activeSessionId", () => {
+      const mockApi: any = {
+        state: {
+          session: {
+            get: (id: string) => {
+              if (id === "ses-grandchild") return { id: "ses-grandchild", parentID: "ses-child" };
+              if (id === "ses-child") return { id: "ses-child", parentID: "ses-active" };
+              return undefined;
+            },
+          },
+        },
+      };
+      expect(shouldHandleRequest({ sessionID: "ses-grandchild" }, "ses-active", mockApi)).toBe(true);
+    });
+
+    test("blocks request when child session belongs to a different parent", () => {
+      const mockApi: any = {
+        state: {
+          session: {
+            get: (id: string) => {
+              if (id === "ses-other-child") return { id: "ses-other-child", parentID: "ses-other-parent" };
+              return undefined;
+            },
+          },
+        },
+      };
+      expect(shouldHandleRequest({ sessionID: "ses-other-child" }, "ses-active", mockApi)).toBe(false);
+    });
   });
 
   describe("Multi-session TUI integration (No Dialog Leaks)", () => {
@@ -179,6 +222,84 @@ describe("TUI Session Isolation & Routing (TDD)", () => {
       comp.props.onConfirm();
 
       const res = readResponse("call-for-a", ipcDir);
+      expect(res?.decision).toBe("allow");
+
+      for (const cb of disposeCallbacksA) cb();
+      rmSync(ipcDir, { recursive: true, force: true });
+    });
+
+    test("TUI on session A processes and displays request from a subagent session whose parentID is session A", async () => {
+      const ipcDir = mkdtempSync(join(tmpdir(), "ga-tui-subagent-ses-"));
+      ensureIpcDir(ipcDir);
+
+      let renderedA: any = null;
+      const disposeCallbacksA: Array<() => void> = [];
+
+      const mockApiSessionA: any = {
+        route: {
+          current: {
+            name: "session",
+            params: { sessionID: "ses-A" },
+          },
+        },
+        state: {
+          session: {
+            get: (id: string) => {
+              if (id === "ses-subagent-1") {
+                return {
+                  id: "ses-subagent-1",
+                  parentID: "ses-A",
+                  title: "PHP Compatibility Check (@general subagent)",
+                };
+              }
+              return undefined;
+            },
+          },
+        },
+        ui: {
+          dialog: {
+            replace: (render: () => any) => {
+              renderedA = render;
+            },
+            clear: () => {},
+          },
+          DialogConfirm: (props: any) => ({ type: "confirm", props }),
+        },
+        lifecycle: {
+          onDispose: (cb: () => void) => {
+            disposeCallbacksA.push(cb);
+          },
+        },
+      };
+
+      await GuardianAngelTui(mockApiSessionA, { ipcDir }, {} as any);
+
+      // Submit request from subagent
+      const reqSubagent: IpcRequest = {
+        callID: "call-from-subagent",
+        sessionID: "ses-subagent-1",
+        tool: "bash",
+        command: "python3 -c 'import json; print(1)'",
+        reason: "inline interpreter code cannot be inspected; approval required",
+        ruleId: "ask:interpreter-inline",
+        createdAt: Date.now(),
+        deadline: 0,
+      };
+      writeRequest(reqSubagent, ipcDir);
+
+      for (let i = 0; i < 20; i++) {
+        if (renderedA !== null) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      // Dialog must appear on parent session A's screen!
+      expect(renderedA).not.toBeNull();
+      const comp = renderedA();
+      expect(comp.props.title).toContain("Guardian Angel: interpreter-i");
+      expect(comp.props.message).toContain("PHP Compatibility Check (@general subagent)");
+
+      comp.props.onConfirm();
+      const res = readResponse("call-from-subagent", ipcDir);
       expect(res?.decision).toBe("allow");
 
       for (const cb of disposeCallbacksA) cb();

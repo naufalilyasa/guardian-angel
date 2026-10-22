@@ -1,6 +1,7 @@
 import { createSignal, onCleanup, For, Show } from "solid-js";
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui";
 import type { GuardRequestView, GuardChoice } from "./permission-view.js";
+import { shouldHandleRequest } from "./session-routing.ts";
 
 export interface QuestionDialogProps {
   api: TuiPluginApi;
@@ -33,10 +34,11 @@ export function PromptSlotWrapper(props: PromptSlotWrapperProps) {
   const current = () => {
     const item = props.activeRequest();
     if (!item) return null;
+    const activeSessionId = props.slotProps.session_id;
     if (
       item.req.sessionID &&
-      props.slotProps.session_id &&
-      item.req.sessionID !== props.slotProps.session_id
+      activeSessionId &&
+      !shouldHandleRequest(item.req as { sessionID: string }, activeSessionId, props.api)
     ) {
       return null;
     }
