@@ -20,12 +20,12 @@ export type ClassifierInput = {
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 
 const BLOCK_PATTERNS: Array<{ id: string; re: RegExp; reason: string }> = [
-  { id: "block:rm-root", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?rm\s+(-[a-zA-Z]*[rR][a-zA-Z]*\s+)*-[a-zA-Z]*f[a-zA-Z]*\s+\/([\s;)|]|$)/, reason: "rm -rf on the root filesystem is blocked" },
+  { id: "block:rm-root", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?rm\s+(?:-[a-zA-Z-]+\s+)*\/([\s;)|]|$)/, reason: "rm -rf on the root filesystem is blocked" },
   { id: "block:rm-home", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?rm\s+(-[a-zA-Z]+\s+)*~([\s;)|]|$)/, reason: "rm on the home directory is blocked" },
   { id: "block:rm-home-env", re: /(^|[\s;|&(])(?:[^\s;|&(]*\/)?rm\s+(-[a-zA-Z]+\s+)*\$HOME([\s;)|]|$)/, reason: "rm on $HOME is blocked" },
-    {
+  {
     id: "block:protected-bash-write",
-    re: /(^|[\s;&|('"`])env\s+[^\n]*?(-C|--chdir[=\s])\s*['"]?\.?(guardian-angel|git)\b/,
+    re: /(^|[\s;&|('"`])env\s+[^\n]*?(-C|--chdir)[=\s]*['"]?[^\s'"]*\.(guardian-angel|git)\b/i,
     reason: "executing inside a protected directory (.guardian-angel or .git) is blocked",
   },
   {
@@ -99,6 +99,26 @@ function inlineCodePayload(rawTokens: string[]): string | null {
     return payload.length > 0 ? payload : null;
   }
 
+  const isAwk = /^(g|m|n)?awk$/.test(program);
+  if (isAwk) {
+    let payload = "";
+    for (let i = 1; i < tokens.length; i += 1) {
+      const t = stripQuotes(tokens[i]);
+      if (t === "-e" && tokens[i + 1] !== undefined) {
+        payload = unquote(tokens[i + 1]);
+        break;
+      }
+      if (t.startsWith("-e=")) {
+        payload = t.slice(3);
+        break;
+      }
+      if (t.startsWith("-")) continue;
+      payload = unquote(tokens[i]);
+      break;
+    }
+    return payload.length > 0 ? payload : null;
+  }
+
   const isPython = PYTHON_PROGRAM.test(program);
   const evalFlags = INTERPRETER_EVAL_FLAGS[program];
   if (!isPython && !evalFlags) return null;
@@ -143,6 +163,18 @@ function classifyInterpreterCode(segments: string[]): GuardResult | null {
         reason: "interpreter code performs a root filesystem wipe and is blocked",
         ruleId: "block:interpreter-destructive",
       };
+    }
+    const rawTokens = stripLaunchers(tokenize(segment)).tokens;
+    const prog = rawTokens.length > 0 ? stripQuotes(rawTokens[0].split("/").pop() ?? "").toLowerCase() : "";
+    if (/^(g|m|n)?awk$/.test(prog)) {
+      if (/\bsystem\s*\(|>\s*["']?[^\s"']|\|\s*["']?[^\s"']/.test(payload)) {
+        return {
+          verdict: "ask",
+          reason: "inline interpreter code cannot be inspected; approval required",
+          ruleId: "ask:interpreter-inline",
+        };
+      }
+      continue;
     }
     return {
       verdict: "ask",
@@ -798,7 +830,7 @@ function stricter(a: GuardResult, b: GuardResult): GuardResult {
 const WRITE_VERBS = new Set([
   "tee", "cp", "mv", "install", "ln", "truncate", "dd", "sed", "perl",
   "chmod", "chown", "touch", "mkdir", "rmdir", "unlink", "rm", "rsync",
-  "tar", "unzip", "patch", "shred",
+  "tar", "unzip", "patch", "shred", "sort", "curl", "wget", "scp",
 ]);
 
 /**
@@ -809,7 +841,7 @@ const WRITE_VERBS = new Set([
  * path through (e.g. `ln -sf x .git/config`).
  */
 const PRECISE_TARGET_VERBS = new Set([
-  "tee", "cp", "mv", "install", "truncate", "dd", "sed",
+  "tee", "cp", "mv", "install", "truncate", "dd", "sed", "sort", "curl", "wget", "scp", "rsync", "tar", "unzip", "ln",
 ]);
 
 function readTargetToken(
@@ -1033,7 +1065,7 @@ function isSink(target: string): boolean {
 }
 
 const WRITE_OVERWRITE_VERBS = new Set([
-  "cp", "mv", "install", "tee", "sed", "truncate", "dd",
+  "cp", "mv", "install", "tee", "sed", "truncate", "dd", "sort", "curl", "wget", "scp", "rsync", "tar", "unzip", "ln",
 ]);
 
 function extractSedTargets(args: string[]): string[] {
@@ -1110,6 +1142,46 @@ function extractVerbTargets(verb: string, args: string[]): { targets: string[]; 
   if (verb === "truncate") return { targets: extractTruncateTargets(args) };
   if (verb === "tee") return { targets: args.filter((t) => !t.startsWith("-")) };
   if (verb === "cp" || verb === "mv" || verb === "install") return extractCpMvTargets(args);
+  if (verb === "sort" || verb === "curl") {
+    const oIdx = args.findIndex((t) => t === "-o" || t === "--output");
+    if (oIdx !== -1 && oIdx + 1 < args.length) return { targets: [args[oIdx + 1]] };
+    const oEq = args.find((t) => t.startsWith("--output="));
+    if (oEq) return { targets: [oEq.slice("--output=".length)] };
+    return { targets: [] };
+  }
+  if (verb === "wget") {
+    const oIdx = args.findIndex((t) => t === "-O" || t === "--output-document");
+    if (oIdx !== -1 && oIdx + 1 < args.length) return { targets: [args[oIdx + 1]] };
+    const oEq = args.find((t) => t.startsWith("--output-document=") || (t.startsWith("-O") && t.length > 2));
+    if (oEq) {
+      const val = oEq.startsWith("-O") ? oEq.slice(2) : oEq.slice("--output-document=".length);
+      return { targets: [val] };
+    }
+    return { targets: [] };
+  }
+  if (verb === "scp" || verb === "rsync") {
+    const nonFlags = args.filter((t) => !t.startsWith("-"));
+    if (nonFlags.length >= 2) return { targets: [nonFlags[nonFlags.length - 1]], srcPaths: nonFlags.slice(0, -1) };
+    return { targets: [] };
+  }
+  if (verb === "tar") {
+    const cIdx = args.findIndex((t) => t === "-C" || t === "--directory");
+    if (cIdx !== -1 && cIdx + 1 < args.length) return { targets: [args[cIdx + 1]] };
+    const cEq = args.find((t) => t.startsWith("--directory="));
+    if (cEq) return { targets: [cEq.slice("--directory=".length)] };
+    return { targets: [] };
+  }
+  if (verb === "unzip") {
+    const dIdx = args.findIndex((t) => t === "-d");
+    if (dIdx !== -1 && dIdx + 1 < args.length) return { targets: [args[dIdx + 1]] };
+    return { targets: [] };
+  }
+  if (verb === "ln") {
+    const nonFlags = args.filter((t) => !t.startsWith("-"));
+    if (nonFlags.length >= 2) return { targets: [nonFlags[nonFlags.length - 1]], srcPaths: nonFlags.slice(0, -1) };
+    if (nonFlags.length === 1) return { targets: [nonFlags[0]] };
+    return { targets: [] };
+  }
   return { targets: [] };
 }
 

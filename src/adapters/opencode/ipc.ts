@@ -1,6 +1,7 @@
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -40,12 +41,18 @@ export function getWorkspaceIpcDir(
 
 export function ensureIpcDir(ipcDir = getDefaultIpcDir()): string {
   try {
-    mkdirSync(ipcDir, { recursive: true, mode: 0o700 });
+    if (!existsSync(ipcDir)) {
+      mkdirSync(ipcDir, { recursive: true, mode: 0o700 });
+    }
+    const stat = lstatSync(ipcDir);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`[guardian-angel] insecure IPC directory: symlink detected at ${ipcDir}`);
+    }
     try {
       chmodSync(ipcDir, 0o700);
     } catch {}
-  } catch {
-    // directory may already exist
+  } catch (err: any) {
+    if (err?.message?.includes("insecure IPC directory")) throw err;
   }
   return ipcDir;
 }
@@ -59,7 +66,7 @@ export function writeHeartbeat(ipcDir = getDefaultIpcDir()): void {
     updatedAt: Date.now(),
   };
   const target = join(ipcDir, HEARTBEAT_FILE);
-  writeFileSync(target, JSON.stringify(data), "utf-8");
+  writeFileSync(target, JSON.stringify(data), { encoding: "utf-8", mode: 0o600 });
 }
 
 export function removeHeartbeat(ipcDir = getDefaultIpcDir()): void {

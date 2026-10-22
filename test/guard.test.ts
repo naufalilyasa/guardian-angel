@@ -81,6 +81,18 @@ describe("ask", () => {
     expect(recorded.some((e) => e.tier === "ask")).toBe(true);
   });
 
+  test("passes the specific ruleId to confirm as title", async () => {
+    const { deps } = harness({ approve: true });
+    let passedTitle = "";
+    deps.confirm = async (title: string) => {
+      passedTitle = title;
+      return true;
+    };
+
+    await guard(bash("git push origin main"), deps);
+    expect(passedTitle).toBe("ask:git-push");
+  });
+
   test("denied confirmation yields block and records no grant", async () => {
     const { deps, recorded, workspace } = harness({ approve: false });
 

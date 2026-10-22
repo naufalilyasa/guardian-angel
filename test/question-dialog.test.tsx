@@ -631,4 +631,50 @@ describe("QuestionDialog Component (OpenTUI Solid)", () => {
       setup.renderer.destroy();
     }
   });
+
+  test("unmounting without manual settlement fails closed and settles deny", async () => {
+    const setup = await createTestRenderer({ width: 88, height: 24 });
+    let settledDecision: "allow" | "deny" | null = null;
+
+    const mockApi: any = {
+      theme: {
+        current: {
+          warning: "#f5a742",
+          text: "#eeeeee",
+          textMuted: "#808080",
+          backgroundPanel: "#141414",
+          backgroundElement: "#1e1e1e",
+        },
+      },
+      renderer: setup.renderer,
+    };
+
+    const req = {
+      ruleId: "ask:git-push",
+      reason: "pushing code",
+      tool: "bash",
+      command: "git push origin main",
+    };
+
+    await render(
+      () => (
+        <QuestionDialog
+          api={mockApi}
+          view={describeGuardRequest(req)}
+          choices={guardChoices()}
+          onSettle={(d) => {
+            settledDecision = d;
+          }}
+        />
+      ),
+      setup.renderer,
+    );
+
+    await setup.renderOnce();
+    expect(settledDecision).toBeNull();
+
+    // Session switch / component unmount
+    setup.renderer.destroy();
+    expect(settledDecision as string | null).toBe("deny");
+  });
 });

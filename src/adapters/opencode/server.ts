@@ -81,6 +81,7 @@ const preparedWorkspaces = new Set<string>();
  * automatically retries a failed tool call. TTL is 30 seconds by default.
  */
 const recentDenials = new Map<string, number>();
+const MAX_RECENT_DENIALS = 500;
 
 export function getDenialKey(sessionId: string, tool: string, args: Record<string, unknown>): string {
   const target = String(args?.command ?? args?.filePath ?? "");
@@ -98,6 +99,13 @@ export function isRecentlyDenied(key: string, now = Date.now()): boolean {
 }
 
 export function recordDenial(key: string, ttlMs = 30_000, now = Date.now()): void {
+  for (const [k, exp] of recentDenials.entries()) {
+    if (exp <= now) recentDenials.delete(k);
+  }
+  if (recentDenials.size >= MAX_RECENT_DENIALS) {
+    const oldestKey = recentDenials.keys().next().value;
+    if (oldestKey) recentDenials.delete(oldestKey);
+  }
   recentDenials.set(key, now + ttlMs);
 }
 
