@@ -306,6 +306,7 @@ export function classifyScriptFile(
   tokens: string[],
   workspace: string,
   effectiveCwd: string = workspace,
+  fullCommand?: string,
 ): GuardResult | null {
   const candidate = extractScriptCandidate(tokens);
   if (!candidate) return null;
@@ -333,6 +334,38 @@ export function classifyScriptFile(
     };
   }
 
-  if (!existsSync(resolved)) return null;
+  if (!existsSync(resolved)) {
+    if (fullCommand) {
+      const targetBase = target.split("/").pop() ?? target;
+      const escaped = targetBase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const writesToTarget = new RegExp(`(?:>>?|\\btee\\b)\\s+['"]?(?:[^\\s;&|]*\\/)?${escaped}['"]?(?:[\\s;&|]|$)`).test(fullCommand);
+      if (writesToTarget) {
+        const decoded = fullCommand.replace(/\\[nrt]/g, " ");
+        if (PROTECTED_ENTRY_RE.test(decoded) && /\b(?:rm|write|truncate|open|shutil|unlink)\b/i.test(decoded)) {
+          return {
+            verdict: "block",
+            reason: `dynamically created script '${target}' attempts to modify protected area (.guardian-angel/.git) and is blocked`,
+            ruleId: "block:protected-script",
+            scopePath: resolved,
+          };
+        }
+        if (DESTRUCTIVE_SCRIPT_RE.test(decoded) || /\brm\s+-[a-zA-Z]*f\b/i.test(decoded)) {
+          return {
+            verdict: "block",
+            reason: `dynamically created script '${target}' contains destructive command and is blocked`,
+            ruleId: "block:script-destructive",
+            scopePath: resolved,
+          };
+        }
+        return {
+          verdict: "ask",
+          reason: `executing dynamically generated script '${target}' in command pipeline requires approval`,
+          ruleId: "ask:script-dynamically-generated",
+          scopePath: resolved,
+        };
+      }
+    }
+    return null;
+  }
   return readAndInspectScript(target, resolved, workspace);
 }

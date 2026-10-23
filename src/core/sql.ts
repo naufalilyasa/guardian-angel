@@ -145,7 +145,9 @@ function tokenize(command: string): string[] {
  */
 function findClient(tokens: string[]): { index: number; client: string } | null {
   const isBoundary = (token: string | undefined): boolean =>
-    token === undefined || /^(\||\|\||;|&&|\|\|)$/.test(token);
+    token === undefined ||
+    /^(\||\|\||;|&&|\|\|)$/.test(token) ||
+    /[;&|]$/.test(token);
 
   for (let i = 0; i < tokens.length; i += 1) {
     if (!isBoundary(tokens[i - 1])) continue;
@@ -296,7 +298,15 @@ export function classifySql(command: string): SqlVerdict | null {
   const found = findClient(tokens);
   if (!found) return null;
 
-  const args = tokens.slice(found.index + 1);
+  const rawArgs = tokens.slice(found.index + 1);
+  const args: string[] = [];
+  for (const arg of rawArgs) {
+    if (/^[;&|]+$/.test(arg)) break;
+    const cleanArg = arg.replace(/[;&|]+$/, "");
+    if (cleanArg.length > 0) args.push(cleanArg);
+    if (/[;&|]$/.test(arg)) break;
+  }
+
   if (isInformationalInvocation(args)) return null;
   return classifyAll(payloadFromArgs(found.client, args));
 }

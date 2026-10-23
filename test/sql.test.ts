@@ -184,4 +184,11 @@ describe("malformed input", () => {
   test("asks when the client has no payload", () => {
     expect(verdict("mysql")).toBe("ask");
   });
+
+  test("REGRESSION: detects destructive SQL in compound command", () => {
+    const cmd = 'cd /tmp; sqlite3 production.db "DROP TABLE users;" 2>&1; echo "rc=$?"';
+    const res = classifySql(cmd);
+    expect(res?.verdict).toBe("block");
+    expect(res?.reason).toBe("DROP is blocked");
+  });
 });

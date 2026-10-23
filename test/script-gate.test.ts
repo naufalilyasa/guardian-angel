@@ -272,4 +272,25 @@ describe("Script Content Gate (Batas 1)", () => {
     expect(res2.verdict).toBe("allow");
     expect(script2Confirmed).toBe(true);
   });
+
+  test("blocks compound command that creates and executes a script tampering with protected store", () => {
+    const cmd = "printf '#!/bin/sh\\nrm -rf .guardian-angel\\n' > payload.sh; sh payload.sh";
+    const res = classifyCmd(cmd);
+    expect(res.verdict).toBe("block");
+    expect(res.ruleId).toBe("block:protected-script");
+  });
+
+  test("blocks compound command that creates and executes a destructive script", () => {
+    const cmd = "printf '#!/bin/sh\\nrm -rf /\\n' > payload.sh; bash payload.sh";
+    const res = classifyCmd(cmd);
+    expect(res.verdict).toBe("block");
+    expect(res.ruleId).toBe("block:script-destructive");
+  });
+
+  test("asks for compound command that creates and executes benign dynamic script", () => {
+    const cmd = "printf '#!/bin/sh\\necho hello\\n' > payload.sh; bash payload.sh";
+    const res = classifyCmd(cmd);
+    expect(res.verdict).toBe("ask");
+    expect(res.ruleId).toBe("ask:script-dynamically-generated");
+  });
 });

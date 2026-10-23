@@ -1643,6 +1643,26 @@ function classifyCommand(
     if (re.test(patternTarget)) return { verdict: "block", reason, ruleId: id };
   }
 
+  let segmentSqlAsk: GuardResult | null = null;
+  for (const segment of segments) {
+    const s = classifySql(segment);
+    if (s && s.verdict === "block") {
+      return {
+        verdict: "block",
+        reason: s.reason ?? "perintah SQL is blocked",
+        ruleId: `sql:${s.verdict}`,
+      };
+    }
+    if (s && s.verdict === "ask") {
+      const askRes: GuardResult = {
+        verdict: "ask",
+        reason: s.reason ?? "perintah SQL requires approval",
+        ruleId: `sql:${s.verdict}`,
+      };
+      segmentSqlAsk = segmentSqlAsk ? stricter(segmentSqlAsk, askRes) : askRes;
+    }
+  }
+
   const sql = classifySql(normalized);
   if (sql && sql.verdict === "block") {
     return {
@@ -1667,7 +1687,7 @@ function classifyCommand(
       };
     }
     const effectiveCwd = cwdMap.get(segment) ?? workspace;
-    const scriptRes = classifyScriptFile(tokens, workspace, effectiveCwd);
+    const scriptRes = classifyScriptFile(tokens, workspace, effectiveCwd, normalized);
     if (scriptRes?.verdict === "block") return scriptRes;
     if (scriptRes?.verdict === "ask") {
       scriptAsk = scriptAsk ? stricter(scriptAsk, scriptRes) : scriptRes;
@@ -1725,6 +1745,9 @@ function classifyCommand(
       ruleId: `sql:${sql.verdict}`,
     };
     effective = effective ? stricter(effective, sqlAsk) : sqlAsk;
+  }
+  if (segmentSqlAsk) {
+    effective = effective ? stricter(effective, segmentSqlAsk) : segmentSqlAsk;
   }
   if (interpreter && interpreter.verdict === "ask") {
     effective = effective ? stricter(effective, interpreter) : interpreter;
