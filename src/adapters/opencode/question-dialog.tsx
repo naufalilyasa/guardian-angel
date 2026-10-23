@@ -113,6 +113,8 @@ export function QuestionDialog(props: QuestionDialogProps) {
   const [selectedIndex, setSelectedIndex] = createSignal(0);
   const [expanded, setExpanded] = createSignal(false);
   let scrollboxRef: any = null;
+  let hintTextRef: any = null;
+  let footerHintRef: any = null;
   let settled = false;
 
   const settleOnce = (decision: "allow" | "deny") => {
@@ -128,9 +130,34 @@ export function QuestionDialog(props: QuestionDialogProps) {
   });
 
   const detailLines = () => props.view.detail.split("\n");
-  const isExpandable = () => detailLines().length > 3 || props.view.detail.length > 180;
-  const compactHeight = () => Math.min(Math.max(detailLines().length, 1), 3);
-  const expandedHeight = () => Math.min(Math.max(detailLines().length, 1), 12);
+  const estimatedLines = () => {
+    const lines = detailLines();
+    let total = 0;
+    for (const l of lines) {
+      total += Math.max(1, Math.ceil(l.length / 60));
+    }
+    return total;
+  };
+
+  const isExpandable = () => detailLines().length > 1 || props.view.detail.length > 60;
+  const compactHeight = () => Math.min(Math.max(detailLines().length, 1), 2);
+  const expandedHeight = () => Math.min(Math.max(estimatedLines(), 6), 14);
+
+  const toggleExpand = () => {
+    if (!isExpandable()) return;
+    const next = !expanded();
+    setExpanded(next);
+    if (scrollboxRef) {
+      scrollboxRef.height = next ? expandedHeight() : compactHeight();
+      scrollboxRef.maxHeight = next ? 14 : 2;
+    }
+    if (hintTextRef) {
+      hintTextRef.content = next ? "[tab collapse]" : "[tab expand]";
+    }
+    if (footerHintRef) {
+      footerHintRef.content = next ? "tab collapse" : "tab expand";
+    }
+  };
 
   // 1. Push "question" mode so OpenCode suspends normal transcript scroll
   // and prompt navigation bindings while this dialog is visible.
@@ -169,9 +196,7 @@ export function QuestionDialog(props: QuestionDialogProps) {
           title: "Toggle Command Expansion",
           category: "Guardian Angel",
           run() {
-            if (isExpandable()) {
-              setExpanded((v) => !v);
-            }
+            toggleExpand();
           },
         },
         {
@@ -280,9 +305,7 @@ export function QuestionDialog(props: QuestionDialogProps) {
             key.stopPropagation?.();
           }
         } else if (name === "tab" || key.sequence === "\t") {
-          if (isExpandable()) {
-            setExpanded((v) => !v);
-          }
+          toggleExpand();
           key.preventDefault?.();
           key.stopPropagation?.();
         } else if (name === "pageup" || (key.shift && (name === "up" || key.sequence === "\x1b[1;2A"))) {
@@ -352,15 +375,17 @@ export function QuestionDialog(props: QuestionDialogProps) {
             fallback={<box width={0} height={0} />}
           >
             <box
-              onMouseUp={() => setExpanded((v) => !v)}
+              onMouseUp={() => toggleExpand()}
               flexShrink={0}
             >
-              <Show
-                when={expanded()}
-                fallback={<text fg={theme().warning}>[tab expand]</text>}
+              <text
+                ref={(el: any) => {
+                  hintTextRef = el;
+                }}
+                fg={theme().warning}
               >
-                <text fg={theme().warning}>[tab collapse]</text>
-              </Show>
+                {expanded() ? "[tab collapse]" : "[tab expand]"}
+              </text>
             </box>
           </Show>
         </box>
@@ -369,7 +394,7 @@ export function QuestionDialog(props: QuestionDialogProps) {
             scrollboxRef = el;
           }}
           height={expanded() ? expandedHeight() : compactHeight()}
-          maxHeight={expanded() ? 12 : 3}
+          maxHeight={expanded() ? 14 : 2}
           scrollY={true}
           scrollX={false}
         >
@@ -442,18 +467,14 @@ export function QuestionDialog(props: QuestionDialogProps) {
             fallback={<box width={0} height={0} />}
           >
             <box flexShrink={0}>
-              <Show
-                when={expanded()}
-                fallback={
-                  <text fg={theme().text}>
-                    tab <span style={{ fg: theme().textMuted }}>expand</span>
-                  </text>
-                }
+              <text
+                ref={(el: any) => {
+                  footerHintRef = el;
+                }}
+                fg={theme().text}
               >
-                <text fg={theme().text}>
-                  tab <span style={{ fg: theme().textMuted }}>collapse</span>
-                </text>
-              </Show>
+                tab {expanded() ? "collapse" : "expand"}
+              </text>
             </box>
           </Show>
         </box>

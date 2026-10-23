@@ -585,6 +585,134 @@ describe("QuestionDialog Component (OpenTUI Solid)", () => {
     }
   });
 
+  test("tab key toggles between compact and expanded scrollbox views for long single-line commands", async () => {
+    const setup = await createTestRenderer({ width: 88, height: 30 });
+
+    const mockApi: any = {
+      theme: {
+        current: {
+          warning: "#f5a742",
+          text: "#eeeeee",
+          textMuted: "#808080",
+          backgroundPanel: "#141414",
+          backgroundElement: "#1e1e1e",
+        },
+      },
+      renderer: setup.renderer,
+    };
+
+    const singleLineLongCmd =
+      "git push origin feature/very-long-branch-name-for-user-authentication-and-authorization-token-refresh --force-with-lease --verbose";
+
+    const req = {
+      ruleId: "ask:git-push",
+      reason: "pushing code",
+      tool: "bash",
+      command: singleLineLongCmd,
+    };
+
+    try {
+      await render(
+        () => (
+          <QuestionDialog
+            api={mockApi}
+            view={describeGuardRequest(req)}
+            choices={guardChoices()}
+            onSettle={() => {}}
+          />
+        ),
+        setup.renderer,
+      );
+
+      await setup.renderOnce();
+      const compactFrame = setup.captureCharFrame();
+      expect(compactFrame).toContain("[tab expand]");
+
+      // Press Tab to expand
+      setup.renderer.keyInput.emit("keypress", { name: "tab", sequence: "\t" } as any);
+      await setup.renderOnce();
+      const expandedFrame = setup.captureCharFrame();
+      expect(expandedFrame).toContain("[tab collapse]");
+      expect(expandedFrame).toContain("authorization-token-refresh");
+
+      // Press Tab again to collapse
+      setup.renderer.keyInput.emit("keypress", { name: "tab", sequence: "\t" } as any);
+      await setup.renderOnce();
+      const recompactFrame = setup.captureCharFrame();
+      expect(recompactFrame).toContain("[tab expand]");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  test("guardian.tab keymap command expands and collapses scrollbox height for expandable command", async () => {
+    const setup = await createTestRenderer({ width: 88, height: 30 });
+    let registeredLayer: any = null;
+
+    const mockApi: any = {
+      keymap: {
+        registerLayer: (layer: any) => {
+          registeredLayer = layer;
+          return () => {};
+        },
+      },
+      theme: {
+        current: {
+          warning: "#f5a742",
+          text: "#eeeeee",
+          textMuted: "#808080",
+          backgroundPanel: "#141414",
+          backgroundElement: "#1e1e1e",
+        },
+      },
+      renderer: setup.renderer,
+    };
+
+    const singleLineLongCmd =
+      "git push origin feature/very-long-branch-name-for-user-authentication-and-authorization-token-refresh --force-with-lease --verbose";
+
+    const req = {
+      ruleId: "ask:git-push",
+      reason: "pushing code",
+      tool: "bash",
+      command: singleLineLongCmd,
+    };
+
+    try {
+      await render(
+        () => (
+          <QuestionDialog
+            api={mockApi}
+            view={describeGuardRequest(req)}
+            choices={guardChoices()}
+            onSettle={() => {}}
+          />
+        ),
+        setup.renderer,
+      );
+
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("[tab expand]");
+
+      const tabCmd = registeredLayer.commands.find((c: any) => c.name === "guardian.tab");
+      expect(tabCmd).toBeDefined();
+
+      // Run guardian.tab -> expands height
+      tabCmd.run();
+      await setup.renderOnce();
+      const expandedFrame = setup.captureCharFrame();
+      expect(expandedFrame).toContain("[tab collapse]");
+      expect(expandedFrame).toContain("authorization-token-refresh");
+
+      // Run guardian.tab again -> collapses height
+      tabCmd.run();
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("[tab expand]");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
   test("does not show expand hint for short single-line commands", async () => {
     const setup = await createTestRenderer({ width: 88, height: 24 });
 
