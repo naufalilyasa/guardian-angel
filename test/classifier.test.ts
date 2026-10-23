@@ -1193,16 +1193,22 @@ describe("REGRESSION: overwrite detection and tool path normalization", () => {
     expect(classify({ call: { toolName: "bash", input: { command: "echo cm0gLXJmIC8= | base64 -d | bash" } }, workspace: ws }).verdict).toBe("ask");
     expect(classify({ call: { toolName: "bash", input: { command: "cat script.sh | sh" } }, workspace: ws }).verdict).toBe("ask");
     expect(classify({ call: { toolName: "bash", input: { command: "echo hello | /bin/bash" } }, workspace: ws }).verdict).toBe("ask");
+    expect(classify({ call: { toolName: "bash", input: { command: "echo x | base64 -d | env -i bash" } }, workspace: ws }).verdict).toBe("ask");
+    expect(classify({ call: { toolName: "bash", input: { command: "echo x | base64 -d | busybox sh" } }, workspace: ws }).verdict).toBe("ask");
     expect(classify({ call: { toolName: "bash", input: { command: "find . | xargs sh" } }, workspace: ws }).verdict).toBe("ask");
     expect(classify({ call: { toolName: "bash", input: { command: 'eval "$(echo cm0gLXJmIC8= | base64 -d)"' } }, workspace: ws }).verdict).toBe("ask");
     expect(classify({ call: { toolName: "bash", input: { command: "git commit -m \"docs: pipe to bash\"" } }, workspace: ws }).verdict).toBe("allow");
     expect(classify({ call: { toolName: "bash", input: { command: "git log | head" } }, workspace: ws }).verdict).toBe("allow");
 
-    // 8. ANSI-C hex unescape
+    // 8. ANSI-C hex, octal, and unicode unescape
     expect(classify({ call: { toolName: "bash", input: { command: "$'\\x72\\x6d' -rf /" } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: "$'\\162\\155' -rf /" } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: "$'\\u0072\\u006d' -rf /" } }, workspace: ws }).verdict).toBe("block");
 
-    // 9. SSH remote command unwrapping
+    // 9. SSH remote command unwrapping & wrappers
     expect(classify({ call: { toolName: "bash", input: { command: "ssh host 'rm -rf /'" } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: "sshpass -p secret ssh host 'rm -rf /'" } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: "sshpass -p secret host 'rm -rf /'" } }, workspace: ws }).verdict).toBe("block");
     expect(classify({ call: { toolName: "bash", input: { command: 'ssh -p 2222 user@server "mysql -e \'DROP DATABASE prod\'"' } }, workspace: ws }).verdict).toBe("block");
     expect(classify({ call: { toolName: "bash", input: { command: "ssh host 'sudo apt update'" } }, workspace: ws }).verdict).toBe("ask");
     expect(classify({ call: { toolName: "bash", input: { command: "ssh host 'rm file.txt'" } }, workspace: ws }).verdict).toBe("ask");
@@ -1211,5 +1217,6 @@ describe("REGRESSION: overwrite detection and tool path normalization", () => {
     expect(classify({ call: { toolName: "bash", input: { command: "ssh host 'ls -la'" } }, workspace: ws }).verdict).toBe("allow");
     expect(classify({ call: { toolName: "bash", input: { command: "ssh user@host" } }, workspace: ws }).verdict).toBe("allow");
     expect(classify({ call: { toolName: "bash", input: { command: 'ssh -o ProxyCommand="rm -rf /" host' } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: 'ssh -o ProxyCommand="rm file.txt" host' } }, workspace: ws }).verdict).toBe("block");
   });
 });

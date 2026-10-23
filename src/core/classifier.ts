@@ -55,7 +55,7 @@ const ASK_PATTERNS: Array<{ id: string; re: RegExp; reason: string }> = [
   { id: "ask:docker-prune", re: /(^|[\s;|&(])docker\s+system\s+prune\b/, reason: "docker system prune requires approval" },
   {
     id: "ask:pipe-to-shell",
-    re: /\|\s*(?:env\s+|sudo\s+)?(?:[^\s;|&()]*\/)?(sh|bash|zsh|dash|ksh)\b/,
+    re: /\|\s*(?:(?:env|sudo|busybox)\s+(?:[^\s;|&()]*\s+)*?)?(?:[^\s;|&()]*\/)?(sh|bash|zsh|dash|ksh)\b/,
     reason: "piping into a shell executes dynamic code and requires approval",
   },
 ];
@@ -219,8 +219,15 @@ const SUBSTITUTION = /(?:[\$<>]\(([^()]+)\)|`([^`]*)`)/g;
 export function stripQuotes(token: string): string {
   let cleaned = token;
   if (cleaned.startsWith("$'") || cleaned.startsWith('$"')) {
-    cleaned = cleaned.replace(/\\x([0-9a-fA-F]{2})/g, (_, hex) =>
-      String.fromCharCode(parseInt(hex, 16))
+    cleaned = cleaned.replace(
+      /\\x([0-9a-fA-F]{1,2})|\\([0-7]{1,3})|\\u([0-9a-fA-F]{4})|\\U([0-9a-fA-F]{8})/g,
+      (_, hex?: string, oct?: string, u4?: string, u8?: string) => {
+        if (hex) return String.fromCharCode(parseInt(hex, 16));
+        if (oct) return String.fromCharCode(parseInt(oct, 8));
+        if (u4) return String.fromCharCode(parseInt(u4, 16));
+        if (u8) return String.fromCodePoint(parseInt(u8, 16));
+        return _;
+      }
     );
   }
   return cleaned.replace(/^\$['"]/, "").replace(/['"\\]/g, "");
@@ -369,15 +376,43 @@ const SSH_VALUE_FLAGS = new Set([
   "-p", "-i", "-l", "-o", "-c", "-m", "-F", "-b", "-E", "-I", "-J", "-L", "-R", "-D", "-W", "-w",
 ]);
 
+type SshExtractedPayload = { command: string; isRemote: boolean };
+
+function stripSshWrappers(tokens: string[]): { tokens: string[]; isWrapped: boolean } {
+  if (tokens.length < 2) return { tokens, isWrapped: false };
+  const firstProg = stripQuotes(tokens[0].split("/").pop() ?? "").toLowerCase();
+  if (firstProg === "sshpass") {
+    let i = 1;
+    while (i < tokens.length && tokens[i].startsWith("-")) {
+      const tok = stripQuotes(tokens[i]);
+      if (tok === "-p" || tok === "-f" || tok === "-d" || tok === "-P") {
+        i += 2;
+      } else {
+        i++;
+      }
+    }
+    if (i < tokens.length) {
+      const rest = tokens.slice(i);
+      const nextProg = stripQuotes(rest[0].split("/").pop() ?? "").toLowerCase();
+      if (nextProg === "ssh" || nextProg === "autossh") {
+        return { tokens: rest, isWrapped: true };
+      }
+      return { tokens: ["ssh", ...rest], isWrapped: true };
+    }
+  }
+  return { tokens, isWrapped: false };
+}
+
 /**
  * Extract remote command payload and any local ProxyCommand from an ssh invocation.
  */
-function extractSshPayloads(tokens: string[]): string[] {
-  const payloads: string[] = [];
+function extractSshPayloads(rawTokens: string[]): SshExtractedPayload[] {
+  const { tokens } = stripSshWrappers(rawTokens);
+  const payloads: SshExtractedPayload[] = [];
   if (tokens.length < 2) return payloads;
 
   const prog = stripQuotes(tokens[0].split("/").pop() ?? "").toLowerCase();
-  if (prog !== "ssh") return payloads;
+  if (prog !== "ssh" && prog !== "autossh") return payloads;
 
   let i = 1;
   let destIndex = -1;
@@ -400,14 +435,14 @@ function extractSshPayloads(tokens: string[]): string[] {
         const val = unquote(tokens[i + 1]);
         if (/^ProxyCommand\s*=/i.test(val)) {
           const cmd = val.replace(/^ProxyCommand\s*=\s*/i, "").trim();
-          if (cmd) payloads.push(unquote(cmd));
+          if (cmd) payloads.push({ command: unquote(cmd), isRemote: false });
         }
         i += 2;
         continue;
       }
       if (tok.startsWith("-oProxyCommand=") || tok.startsWith("-oProxyCommand ")) {
         const cmd = tok.replace(/^-oProxyCommand[=\s]+/i, "").trim();
-        if (cmd) payloads.push(unquote(cmd));
+        if (cmd) payloads.push({ command: unquote(cmd), isRemote: false });
         i++;
         continue;
       }
@@ -432,10 +467,10 @@ function extractSshPayloads(tokens: string[]): string[] {
     const remoteTokens = tokens.slice(destIndex + 1);
     if (remoteTokens.length === 1) {
       const rawCmd = unquote(remoteTokens[0]).trim();
-      if (rawCmd) payloads.push(rawCmd);
+      if (rawCmd) payloads.push({ command: rawCmd, isRemote: true });
     } else {
       const joined = remoteTokens.map(unquote).join(" ").trim();
-      if (joined) payloads.push(joined);
+      if (joined) payloads.push({ command: joined, isRemote: true });
     }
   }
 
@@ -446,8 +481,9 @@ function isSshInvocation(segment: string): boolean {
   const rawTokens = tokenize(segment);
   const { tokens } = stripLaunchers(rawTokens);
   if (tokens.length === 0) return false;
-  const prog = stripQuotes(tokens[0].split("/").pop() ?? "").toLowerCase();
-  return prog === "ssh";
+  const { tokens: unwrapped } = stripSshWrappers(tokens);
+  const prog = stripQuotes(unwrapped[0]?.split("/").pop() ?? "").toLowerCase();
+  return prog === "ssh" || prog === "autossh";
 }
 
 /**
@@ -488,9 +524,13 @@ function unwrapAll(segment: string): string[] {
         if (first && !/^\$\(|^`/.test(first)) inners.push(first);
         const full = head.slice(1).map(unquote).join(" ").trim();
         if (full && full !== first && !/^\$\(|^`/.test(full)) inners.push(full);
-      } else if (program === "ssh" && head.length > 1) {
-        for (const payload of extractSshPayloads(head)) {
-          if (payload.trim()) inners.push(payload.trim());
+      } else if (head.length > 1) {
+        const { tokens: sshTokens } = stripSshWrappers(head);
+        const sshProg = stripQuotes(sshTokens[0]?.split("/").pop() ?? "").toLowerCase();
+        if (sshProg === "ssh" || sshProg === "autossh") {
+          for (const payload of extractSshPayloads(head)) {
+            if (payload.command.trim()) inners.push(payload.command.trim());
+          }
         }
       }
     }
@@ -1449,13 +1489,16 @@ function classifyUnwrapped(
   }
   const segments = splitSegments(command);
   for (const segment of segments) {
+    const isSsh = isSshInvocation(segment);
+    const sshPayloads = isSsh ? extractSshPayloads(tokenize(segment)) : [];
     for (const inner of unwrapAll(segment)) {
+      const isRemotePayload = sshPayloads.some((p) => p.isRemote && p.command === inner);
       const innerResult = classifyCommand(inner, workspace, depth + 1);
       if (innerResult.verdict !== "allow") {
         return { ...innerResult, ruleId: innerResult.ruleId ?? "block:wrapper" };
       }
       if (innerResult.replacement) {
-        if (isSshInvocation(segment)) {
+        if (isRemotePayload) {
           return {
             verdict: "ask",
             reason: "remote rm cannot be undone via trash; approval required",
