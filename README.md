@@ -204,9 +204,9 @@ Verifikasi lingkungan ext4 mount read-only terisolasi:
 
 Sesuai prinsip transparansi keamanan, batas kemampuan guard didokumentasikan secara terbuka di `test/fixtures/redteam.jsonl`:
 - **Kode Interpreter Inline Kini Gated**: Hasil pentest Atria-Dawn membuktikan `python3 -c "..."` (termasuk payload base64 `executescript`) sempat lolos dengan verdict `allow` tanpa konfirmasi — melalui itu agent bisa menghapus store, audit, dan database. Kini payload interpreter inline (`python3 -c`, `node -e`, `bun -e`, `perl -e`, `ruby -e`, `php -r`, `deno eval`, dsb.) wajib `ask` (tidak dapat diperiksa secara deterministik), dan `block` bila payload menyentuh area terlindungi (`.guardian-angel`/`.git`) atau memuat pola destruktif root.
-- **File Skrip Interpreter**: `python3 payload.py`/`node script.js` tidak diperiksa isinya (berbeda dengan `-c`/`-e` inline) — tetap `allow` dan dicatat sebagai KNOWN BYPAS di corpus; butuh isolasi OS untuk penutupan penuh.
-- **Base64 Pipe ke Shell**: Perintah seperti `echo <base64> | base64 -d | sh` mengevaluasi string di runtime shell.
-- **SSH Remoting**: Perintah yang dieksekusi di remote host lewat `ssh user@host "rm -rf /"` berada di luar jangkauan hook lokal.
+- **Pipe ke Shell & Dynamic Substitution Kini Gated**: Perintah yang mem-pipe data ke shell interpreter (`echo <base64> | base64 -d | bash`, `cat script.sh | sh`, `find | xargs sh`) otomatis di-gate ke `ask:pipe-to-shell` / `ask:xargs-shell`. Substitusi dinamis dalam `eval "$(base64 -d ...)"` di-gate ke `ask:variable-command`. Command word ber-escape heksadesimal (`$'\x72\x6d' -rf /`) di-unescape dan diblokir sebagai `block:rm-root`.
+- **SSH Remoting Kini Di-unwrap & Diinspeksi**: Perintah remote lewat `ssh [flags] host "command"` di-unwrap dan diinspeksi secara rekursif (termasuk ssh bertingkat dan `-o ProxyCommand`). Jika remote command destruktif (`rm -rf /`, `DROP TABLE`) maka langsung `block`; jika mutatif maka `ask`; jika memuat remote `rm` maka di-gate `ask:remote-rm` (karena tidak ada `ga trash` di remote host); dan ssh interaktif tanpa remote command tetap `allow`.
+- **File Skrip Interpreter**: `python3 payload.py`/`node script.js` tidak diperiksa isinya (berbeda dengan `-c`/`-e` inline) — tetap `allow` dan dicatat sebagai KNOWN BYPASS di corpus; butuh script content gate atau isolasi OS untuk penutupan penuh.
 - **Volume Tunggal Trash**: Mekanisme `ga trash` menggunakan `fs.renameSync` atomic O(1); jika target berada di filesystem/mount device berbeda (`EXDEV`), operasi ditolak secara fail-closed tanpa fallback copy+delete.
 
 ---

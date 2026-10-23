@@ -1188,5 +1188,28 @@ describe("REGRESSION: overwrite detection and tool path normalization", () => {
     // 6. Deeply nested parenthesis recursion limit fails safe without stack overflow
     const deepParens = "(".repeat(100) + "echo hi" + ")".repeat(100);
     expect(classify({ call: { toolName: "bash", input: { command: deepParens } }, workspace: ws }).verdict).toBe("ask");
+
+    // 7. Pipe to shell & dynamic substitution in eval
+    expect(classify({ call: { toolName: "bash", input: { command: "echo cm0gLXJmIC8= | base64 -d | bash" } }, workspace: ws }).verdict).toBe("ask");
+    expect(classify({ call: { toolName: "bash", input: { command: "cat script.sh | sh" } }, workspace: ws }).verdict).toBe("ask");
+    expect(classify({ call: { toolName: "bash", input: { command: "echo hello | /bin/bash" } }, workspace: ws }).verdict).toBe("ask");
+    expect(classify({ call: { toolName: "bash", input: { command: "find . | xargs sh" } }, workspace: ws }).verdict).toBe("ask");
+    expect(classify({ call: { toolName: "bash", input: { command: 'eval "$(echo cm0gLXJmIC8= | base64 -d)"' } }, workspace: ws }).verdict).toBe("ask");
+    expect(classify({ call: { toolName: "bash", input: { command: "git commit -m \"docs: pipe to bash\"" } }, workspace: ws }).verdict).toBe("allow");
+    expect(classify({ call: { toolName: "bash", input: { command: "git log | head" } }, workspace: ws }).verdict).toBe("allow");
+
+    // 8. ANSI-C hex unescape
+    expect(classify({ call: { toolName: "bash", input: { command: "$'\\x72\\x6d' -rf /" } }, workspace: ws }).verdict).toBe("block");
+
+    // 9. SSH remote command unwrapping
+    expect(classify({ call: { toolName: "bash", input: { command: "ssh host 'rm -rf /'" } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: 'ssh -p 2222 user@server "mysql -e \'DROP DATABASE prod\'"' } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: "ssh host 'sudo apt update'" } }, workspace: ws }).verdict).toBe("ask");
+    expect(classify({ call: { toolName: "bash", input: { command: "ssh host 'rm file.txt'" } }, workspace: ws }).verdict).toBe("ask");
+    expect(classify({ call: { toolName: "bash", input: { command: 'ssh -o ConnectTimeout=15 ctp-appsvr "ssh reiwa@host \'rm -rf /\'"' } }, workspace: ws }).verdict).toBe("block");
+    expect(classify({ call: { toolName: "bash", input: { command: 'ssh -o ConnectTimeout=15 ctp-appsvr "mysql -u root -e \'SHOW TABLES;\'"' } }, workspace: ws }).verdict).toBe("allow");
+    expect(classify({ call: { toolName: "bash", input: { command: "ssh host 'ls -la'" } }, workspace: ws }).verdict).toBe("allow");
+    expect(classify({ call: { toolName: "bash", input: { command: "ssh user@host" } }, workspace: ws }).verdict).toBe("allow");
+    expect(classify({ call: { toolName: "bash", input: { command: 'ssh -o ProxyCommand="rm -rf /" host' } }, workspace: ws }).verdict).toBe("block");
   });
 });

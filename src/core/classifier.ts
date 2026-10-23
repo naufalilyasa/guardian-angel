@@ -53,6 +53,11 @@ const ASK_PATTERNS: Array<{ id: string; re: RegExp; reason: string }> = [
   { id: "ask:chmod-recursive", re: /(^|[\s;|&(])ch(mod|own)\s+-R\b/, reason: "recursive permission changes require approval" },
   { id: "ask:kill-all", re: /(^|[\s;|&(])kill\s+-9\s+-1([\s;)|]|$)/, reason: "killing all processes requires approval" },
   { id: "ask:docker-prune", re: /(^|[\s;|&(])docker\s+system\s+prune\b/, reason: "docker system prune requires approval" },
+  {
+    id: "ask:pipe-to-shell",
+    re: /\|\s*(?:env\s+|sudo\s+)?(?:[^\s;|&()]*\/)?(sh|bash|zsh|dash|ksh)\b/,
+    reason: "piping into a shell executes dynamic code and requires approval",
+  },
 ];
 
 const RM_ALLOWED_FLAGS = new Set([
@@ -212,7 +217,13 @@ const SUBSTITUTION = /(?:[\$<>]\(([^()]+)\)|`([^`]*)`)/g;
 
 /** Strip quotes and backslashes from command words and tokens. */
 export function stripQuotes(token: string): string {
-  return token.replace(/^\$['"]/, "").replace(/['"\\]/g, "");
+  let cleaned = token;
+  if (cleaned.startsWith("$'") || cleaned.startsWith('$"')) {
+    cleaned = cleaned.replace(/\\x([0-9a-fA-F]{2})/g, (_, hex) =>
+      String.fromCharCode(parseInt(hex, 16))
+    );
+  }
+  return cleaned.replace(/^\$['"]/, "").replace(/['"\\]/g, "");
 }
 
 const LAUNCHER_VAL_FLAGS = new Set([
@@ -354,6 +365,91 @@ function extractParenGroups(str: string, currentDepth = 0): string[] {
   return groups;
 }
 
+const SSH_VALUE_FLAGS = new Set([
+  "-p", "-i", "-l", "-o", "-c", "-m", "-F", "-b", "-E", "-I", "-J", "-L", "-R", "-D", "-W", "-w",
+]);
+
+/**
+ * Extract remote command payload and any local ProxyCommand from an ssh invocation.
+ */
+function extractSshPayloads(tokens: string[]): string[] {
+  const payloads: string[] = [];
+  if (tokens.length < 2) return payloads;
+
+  const prog = stripQuotes(tokens[0].split("/").pop() ?? "").toLowerCase();
+  if (prog !== "ssh") return payloads;
+
+  let i = 1;
+  let destIndex = -1;
+
+  while (i < tokens.length) {
+    const raw = tokens[i];
+    const tok = stripQuotes(raw);
+
+    if (tok === "--") {
+      i++;
+      if (i < tokens.length) {
+        destIndex = i;
+      }
+      break;
+    }
+
+    if (tok.startsWith("-")) {
+      // Check for ProxyCommand inside -o
+      if (tok === "-o" && i + 1 < tokens.length) {
+        const val = unquote(tokens[i + 1]);
+        if (/^ProxyCommand\s*=/i.test(val)) {
+          const cmd = val.replace(/^ProxyCommand\s*=\s*/i, "").trim();
+          if (cmd) payloads.push(unquote(cmd));
+        }
+        i += 2;
+        continue;
+      }
+      if (tok.startsWith("-oProxyCommand=") || tok.startsWith("-oProxyCommand ")) {
+        const cmd = tok.replace(/^-oProxyCommand[=\s]+/i, "").trim();
+        if (cmd) payloads.push(unquote(cmd));
+        i++;
+        continue;
+      }
+
+      const flagPrefix = tok.slice(0, 2);
+      if (SSH_VALUE_FLAGS.has(tok)) {
+        i += 2;
+        continue;
+      } else if (SSH_VALUE_FLAGS.has(flagPrefix) && tok.length > 2) {
+        i++;
+        continue;
+      }
+      i++;
+      continue;
+    }
+
+    destIndex = i;
+    break;
+  }
+
+  if (destIndex !== -1 && destIndex + 1 < tokens.length) {
+    const remoteTokens = tokens.slice(destIndex + 1);
+    if (remoteTokens.length === 1) {
+      const rawCmd = unquote(remoteTokens[0]).trim();
+      if (rawCmd) payloads.push(rawCmd);
+    } else {
+      const joined = remoteTokens.map(unquote).join(" ").trim();
+      if (joined) payloads.push(joined);
+    }
+  }
+
+  return payloads;
+}
+
+function isSshInvocation(segment: string): boolean {
+  const rawTokens = tokenize(segment);
+  const { tokens } = stripLaunchers(rawTokens);
+  if (tokens.length === 0) return false;
+  const prog = stripQuotes(tokens[0].split("/").pop() ?? "").toLowerCase();
+  return prog === "ssh";
+}
+
 /**
  * Unwrap all levels of indirection in a segment: `bash -c "..."`, `eval "..."`,
  * `sh -c '...'`, parenthesized subshell commands `(...)`, and all `$(...)`/backtick payloads.
@@ -392,6 +488,10 @@ function unwrapAll(segment: string): string[] {
         if (first && !/^\$\(|^`/.test(first)) inners.push(first);
         const full = head.slice(1).map(unquote).join(" ").trim();
         if (full && full !== first && !/^\$\(|^`/.test(full)) inners.push(full);
+      } else if (program === "ssh" && head.length > 1) {
+        for (const payload of extractSshPayloads(head)) {
+          if (payload.trim()) inners.push(payload.trim());
+        }
       }
     }
   }
@@ -693,6 +793,14 @@ function checkDelegatedRm(rawTokens: string[], program: string): GuardResult | n
         verdict: "block",
         reason: "xargs rm takes targets from stdin and cannot be verified; run ga trash <path> per target",
         ruleId: "block:rm-xargs",
+      };
+    }
+    const hasShell = rawTokens.some((t) => SHELLS.has(basenameOf(stripQuotes(t))));
+    if (hasShell) {
+      return {
+        verdict: "ask",
+        reason: "xargs spawning a shell requires approval",
+        ruleId: "ask:xargs-shell",
       };
     }
   }
@@ -1347,6 +1455,13 @@ function classifyUnwrapped(
         return { ...innerResult, ruleId: innerResult.ruleId ?? "block:wrapper" };
       }
       if (innerResult.replacement) {
+        if (isSshInvocation(segment)) {
+          return {
+            verdict: "ask",
+            reason: "remote rm cannot be undone via trash; approval required",
+            ruleId: "ask:remote-rm",
+          };
+        }
         if (isSoleShellWrapper(segment) && segments.length === 1) {
           return innerResult;
         }
@@ -1518,15 +1633,15 @@ function classifyCommand(
           };
         }
       }
-      // Gate dynamic substitutions inside shell invocations (e.g. bash -c "$(base64 -d ...)")
+      // Gate dynamic substitutions inside shell invocations or eval (e.g. bash -c "$(base64 -d ...)" or eval "$(base64 -d ...)")
       const prog = stripQuotes(head.split("/").pop() ?? "").toLowerCase();
-      if (SHELLS.has(prog)) {
+      if (SHELLS.has(prog) || prog === "eval") {
         for (let i = 1; i < tokens.length; i++) {
           const tok = unquote(tokens[i]);
           if (/\$\([^)]+\)|`[^`]+`/.test(tok)) {
             return {
               verdict: "ask",
-              reason: `dynamic command substitution inside shell wrapper (${tokens[i].slice(0, 40)}) requires approval`,
+              reason: `dynamic command substitution inside ${prog} (${tokens[i].slice(0, 40)}) requires approval`,
               ruleId: "ask:variable-command",
             };
           }
