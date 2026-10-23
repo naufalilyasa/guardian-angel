@@ -11,6 +11,7 @@ import {
 } from "./paths.ts";
 import { isProtectedPath, protectedReason } from "./protected.ts";
 import { classifySql } from "./sql.ts";
+import { classifyScriptFile } from "./script-gate.ts";
 
 export type ClassifierInput = {
   call: ToolCall;
@@ -1654,6 +1655,7 @@ function classifyCommand(
   const wrapper = classifyUnwrapped(masked, workspace, depth);
   if (wrapper && wrapper.verdict === "block") return wrapper;
 
+  let scriptAsk: GuardResult | null = null;
   for (const segment of segments) {
     const rawTokens = tokenize(segment);
     const { tokens, hitLimit } = stripLaunchers(rawTokens);
@@ -1663,6 +1665,12 @@ function classifyCommand(
         reason: "rantai launcher terlalu dalam (melebihi batas)",
         ruleId: "ask:launcher-depth",
       };
+    }
+    const effectiveCwd = cwdMap.get(segment) ?? workspace;
+    const scriptRes = classifyScriptFile(tokens, workspace, effectiveCwd);
+    if (scriptRes?.verdict === "block") return scriptRes;
+    if (scriptRes?.verdict === "ask") {
+      scriptAsk = scriptAsk ? stricter(scriptAsk, scriptRes) : scriptRes;
     }
     if (tokens.length > 0) {
       const head = tokens[0];
@@ -1720,6 +1728,9 @@ function classifyCommand(
   }
   if (interpreter && interpreter.verdict === "ask") {
     effective = effective ? stricter(effective, interpreter) : interpreter;
+  }
+  if (scriptAsk) {
+    effective = effective ? stricter(effective, scriptAsk) : scriptAsk;
   }
 
   for (const { id, re, reason } of ASK_PATTERNS) {

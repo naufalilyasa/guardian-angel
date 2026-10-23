@@ -47,6 +47,10 @@ export type GuardResult = {
    * approvals so that one approval cannot unlock a different rule's commands.
    */
   ruleId?: string;
+  /**
+   * Specific path to scope this approval to, if narrower than the workspace root.
+   */
+  scopePath?: string;
 };
 
 export type ApprovalStore = {

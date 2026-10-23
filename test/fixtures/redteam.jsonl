@@ -35,7 +35,11 @@
 {"command":"python3 -c \"open('.guardian-angel/audit.jsonl','w').write('[]')\"","expectedTier":"block","note":"pentest proven audit wipe via interpreter"}
 {"command":"node -e \"fs.writeFileSync('.guardian-angel/approvals.json','{}')\"","expectedTier":"block","note":"pentest proven approval forgery via interpreter"}
 {"command":"python3 -c \"import sqlite3,base64;c=sqlite3.connect('production.db');c.executescript(base64.b64decode('REVMRVRFIEZST00gdXNlcnM7').decode())\"","expectedTier":"ask","note":"pentest proven obfuscated SQL via base64 interpreter payload"}
-{"command":"python3 payload.py","expectedTier":"allow","note":"KNOWN BYPASS: interpreter script file not inspected"}
+{"command":"python3 payload.py","expectedTier":"allow","note":"KNOWN BYPASS: missing or dynamically generated script file not present on disk during static parse"}
+{"command":"python3 /tmp/outside_payload.py","expectedTier":"ask","note":"script file outside workspace requires approval"}
+{"command":"python3 $HOME/outside_payload.py","expectedTier":"ask","note":"script path with variable expansion requires approval"}
+{"command":"python3 ~/outside_payload.py","expectedTier":"ask","note":"script path with tilde expansion outside workspace requires approval"}
+{"command":"ssh host < script.sh","expectedTier":"allow","note":"KNOWN BYPASS: remote execution via stdin redirection"}
 {"command":"/bin/rm -rf /","expectedTier":"block","note":"absolute path to rm is blocked"}
 {"command":"command rm -rf /","expectedTier":"block","note":"shell builtin prefix does not evade the rm rule"}
 {"command":"env rm -rf /","expectedTier":"block","note":"env prefix does not evade the rm rule"}

@@ -10,8 +10,13 @@ const DESTRUCTIVE_FALLBACK =
 
 const SEVERITY: Record<Tier, number> = { allow: 0, ask: 1, block: 2 };
 
-function scopeFor(call: ToolCall, deps: GuardDeps, ruleId: string): Scope {
-  const rawPath = extractPath(call.input);
+function scopeFor(
+  call: ToolCall,
+  deps: GuardDeps,
+  ruleId: string,
+  customScopePath?: string,
+): Scope {
+  const rawPath = customScopePath ?? extractPath(call.input);
   const scopePath =
     typeof rawPath === "string" && rawPath.length > 0
       ? resolveLexical(deps.workspace, rawPath)
@@ -64,6 +69,7 @@ function applyNonBashPolicy(
     ruleId: verdict === base.verdict ? base.ruleId : policyRuleId(pathMatch),
   };
   if (base.replacement) result.replacement = base.replacement;
+  if (base.scopePath) result.scopePath = base.scopePath;
   return result;
 }
 
@@ -115,6 +121,7 @@ function applyBashPolicy(
   const result: GuardResult = { verdict, reason };
   if (ruleId !== undefined) result.ruleId = ruleId;
   if (base.replacement) result.replacement = base.replacement;
+  if (base.scopePath) result.scopePath = base.scopePath;
   return result;
 }
 
@@ -243,7 +250,7 @@ async function handleAskVerdict(
   result: GuardResult,
   now: number,
 ): Promise<GuardResult> {
-  const scope = scopeFor(call, deps, ruleIdOf(result));
+  const scope = scopeFor(call, deps, ruleIdOf(result), result.scopePath);
   const command = typeof call.input.command === "string" ? call.input.command : undefined;
 
   if (deps.approvals.check(scope, now)) {
