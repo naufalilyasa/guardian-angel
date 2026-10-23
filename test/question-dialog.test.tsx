@@ -602,7 +602,7 @@ describe("QuestionDialog Component (OpenTUI Solid)", () => {
     };
 
     const singleLineLongCmd =
-      "git push origin feature/very-long-branch-name-for-user-authentication-and-authorization-token-refresh --force-with-lease --verbose";
+      "git push origin feature/very-long-branch-name-for-user-authentication-and-authorization-token-refresh --force-with-lease --verbose --dry-run --progress --recurse-submodules=check --set-upstream origin master:master --no-verify";
 
     const req = {
       ruleId: "ask:git-push",
@@ -669,7 +669,7 @@ describe("QuestionDialog Component (OpenTUI Solid)", () => {
     };
 
     const singleLineLongCmd =
-      "git push origin feature/very-long-branch-name-for-user-authentication-and-authorization-token-refresh --force-with-lease --verbose";
+      "git push origin feature/very-long-branch-name-for-user-authentication-and-authorization-token-refresh --force-with-lease --verbose --dry-run --progress --recurse-submodules=check --set-upstream origin master:master --no-verify";
 
     const req = {
       ruleId: "ask:git-push",
@@ -755,6 +755,97 @@ describe("QuestionDialog Component (OpenTUI Solid)", () => {
       // Single line command does not show expand hint
       expect(frame).not.toContain("[tab expand]");
       expect(frame).not.toContain("tab expand");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  test("renders exactly 2 lines for 2-line command without expand hint", async () => {
+    const setup = await createTestRenderer({ width: 88, height: 24 });
+    const mockApi: any = {
+      theme: {
+        current: {
+          warning: "#f5a742",
+          text: "#eeeeee",
+          textMuted: "#808080",
+          backgroundPanel: "#141414",
+          backgroundElement: "#1e1e1e",
+        },
+      },
+      renderer: setup.renderer,
+    };
+
+    const req = {
+      ruleId: "ask:bash",
+      reason: "running commands",
+      tool: "bash",
+      command: "echo line1\necho line2",
+    };
+
+    try {
+      await render(
+        () => (
+          <QuestionDialog
+            api={mockApi}
+            view={describeGuardRequest(req)}
+            choices={guardChoices()}
+            onSettle={() => {}}
+          />
+        ),
+        setup.renderer,
+      );
+
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("echo line1");
+      expect(frame).toContain("echo line2");
+      expect(frame).not.toContain("[tab expand]");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  test("renders exactly 3 lines for 3-line command without expand hint", async () => {
+    const setup = await createTestRenderer({ width: 88, height: 24 });
+    const mockApi: any = {
+      theme: {
+        current: {
+          warning: "#f5a742",
+          text: "#eeeeee",
+          textMuted: "#808080",
+          backgroundPanel: "#141414",
+          backgroundElement: "#1e1e1e",
+        },
+      },
+      renderer: setup.renderer,
+    };
+
+    const req = {
+      ruleId: "ask:bash",
+      reason: "running commands",
+      tool: "bash",
+      command: "echo line1\necho line2\necho line3",
+    };
+
+    try {
+      await render(
+        () => (
+          <QuestionDialog
+            api={mockApi}
+            view={describeGuardRequest(req)}
+            choices={guardChoices()}
+            onSettle={() => {}}
+          />
+        ),
+        setup.renderer,
+      );
+
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("echo line1");
+      expect(frame).toContain("echo line2");
+      expect(frame).toContain("echo line3");
+      expect(frame).not.toContain("[tab expand]");
     } finally {
       setup.renderer.destroy();
     }

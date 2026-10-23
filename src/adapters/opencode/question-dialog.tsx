@@ -139,8 +139,8 @@ export function QuestionDialog(props: QuestionDialogProps) {
     return total;
   };
 
-  const isExpandable = () => detailLines().length > 1 || props.view.detail.length > 60;
-  const compactHeight = () => Math.min(Math.max(detailLines().length, 1), 2);
+  const isExpandable = () => estimatedLines() >= 4;
+  const compactHeight = () => Math.min(Math.max(estimatedLines(), 1), 3);
   const expandedHeight = () => Math.min(Math.max(estimatedLines(), 6), 14);
 
   const toggleExpand = () => {
@@ -149,7 +149,7 @@ export function QuestionDialog(props: QuestionDialogProps) {
     setExpanded(next);
     if (scrollboxRef) {
       scrollboxRef.height = next ? expandedHeight() : compactHeight();
-      scrollboxRef.maxHeight = next ? 14 : 2;
+      scrollboxRef.maxHeight = next ? 14 : 3;
     }
     if (hintTextRef) {
       hintTextRef.content = next ? "[tab collapse]" : "[tab expand]";
@@ -394,7 +394,7 @@ export function QuestionDialog(props: QuestionDialogProps) {
             scrollboxRef = el;
           }}
           height={expanded() ? expandedHeight() : compactHeight()}
-          maxHeight={expanded() ? 14 : 2}
+          maxHeight={expanded() ? 14 : 3}
           scrollY={true}
           scrollX={false}
         >
