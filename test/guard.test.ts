@@ -420,4 +420,31 @@ describe("policy integration", () => {
     expect(recorded[0].tier).toBe("block");
     expect(recorded[0].reason).toBe("denied by the user");
   });
+
+  test("REGRESSION: tripwire detects tampered approvals.json and re-prompts user", async () => {
+    let confirmCalls = 0;
+    const { deps, workspace } = harness({ approve: true });
+    deps.confirm = async () => {
+      confirmCalls += 1;
+      return true;
+    };
+
+    // First call prompts and stores legitimate approval
+    await guard(bash("git push origin main"), deps);
+    expect(confirmCalls).toBe(1);
+
+    // Second call uses cached approval, no prompt
+    await guard(bash("git push origin main"), deps);
+    expect(confirmCalls).toBe(1);
+
+    // Attacker modifies approvals.json externally
+    const target = join(workspace, ".guardian-angel", "approvals.json");
+    const { chmodSync, writeFileSync } = await import("node:fs");
+    chmodSync(target, 0o600);
+    writeFileSync(target, JSON.stringify({ version: 1, entries: {} }), "utf8");
+
+    // Third call detects tripwire mismatch, purges approvals, and prompts again!
+    await guard(bash("git push origin main"), deps);
+    expect(confirmCalls).toBe(2);
+  });
 });

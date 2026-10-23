@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -142,5 +142,54 @@ describe("createApprovalStore", () => {
 
   test("TTL is 24 hours", () => {
     expect(APPROVAL_TTL_MS).toBe(24 * 60 * 60 * 1000);
+  });
+
+  test("approvals.json is saved on disk with mode 0o400 read-only permissions", () => {
+    const ws = workspace();
+    const store = createApprovalStore({ workspace: ws });
+    store.grant(scope(ws, "file.ts"), 1_700_000_000_000);
+
+    const target = join(ws, ".guardian-angel", "approvals.json");
+    const mode = statSync(target).mode & 0o777;
+    expect(mode).toBe(0o400);
+
+    // Direct unauthorized write fails with EACCES
+    expect(() => writeFileSync(target, "forged-content", "utf8")).toThrow();
+  });
+
+  test("tripwire detects external modification of approvals.json and purges forged entries", () => {
+    const ws = workspace();
+    let tamperReported: string | null = null;
+    const store = createApprovalStore({
+      workspace: ws,
+      onTamper: (msg) => {
+        tamperReported = msg;
+      },
+    });
+
+    const now = 1_700_000_000_000;
+    store.grant(scope(ws, "legit.ts", "ask:git-push"), now);
+    expect(store.check(scope(ws, "legit.ts", "ask:git-push"), now)).toBe(true);
+
+    // Attacker modifies approvals.json externally (e.g. chmod 0o600 + write forged entry)
+    const target = join(ws, ".guardian-angel", "approvals.json");
+    chmodSync(target, 0o600);
+    const existing = JSON.parse(readFileSync(target, "utf8"));
+    const forgedKey = scopeKey(scope(ws, "anything", "ask:sudo"));
+    existing.entries[forgedKey] = {
+      grantedAt: now,
+      expiresAt: now + APPROVAL_TTL_MS,
+    };
+    writeFileSync(target, JSON.stringify(existing, null, 2), "utf8");
+
+    // Next check detects hash mismatch against witness
+    const result = store.check(scope(ws, "anything", "ask:sudo"), now);
+
+    // Forged approval is NOT granted!
+    expect(result).toBe(false);
+    expect(String(tamperReported)).toContain("approvals.json modified externally");
+
+    // Legitimate check also resets because the store was tampered
+    expect(store.check(scope(ws, "legit.ts", "ask:git-push"), now)).toBe(false);
   });
 });

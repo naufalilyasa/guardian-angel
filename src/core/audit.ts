@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { AuditSink } from "./types.ts";
 
@@ -80,7 +80,19 @@ function appendLine(workspace: string, entry: Record<string, unknown>): void {
   const file = auditPath(workspace);
   mkdirSync(join(workspace, ".guardian-angel"), { recursive: true });
   const safe = redactValue(entry) as Record<string, unknown>;
-  appendFileSync(file, `${JSON.stringify(safe)}\n`, "utf8");
+  const line = `${JSON.stringify(safe)}\n`;
+
+  if (existsSync(file)) {
+    try {
+      chmodSync(file, 0o600);
+    } catch {}
+  }
+
+  appendFileSync(file, line, { mode: 0o400, encoding: "utf8" });
+
+  try {
+    chmodSync(file, 0o400);
+  } catch {}
 }
 
 export function appendAudit(workspace: string, entry: AuditEntry): void {

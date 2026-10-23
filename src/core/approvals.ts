@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { ApprovalStore, Scope } from "./types.ts";
 
@@ -71,27 +72,54 @@ function parseFile(raw: string): ApprovalFile {
   return { version: STORE_VERSION, entries };
 }
 
+function computeHash(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
 export function createApprovalStore(opts: {
   workspace: string;
+  onTamper?: (detail: string) => void;
 }): ApprovalStoreWithList {
   const dir = join(opts.workspace, ".guardian-angel");
   const file = join(dir, "approvals.json");
   const tmpFile = `${file}.tmp`;
+
+  let witnessHash: string | null = null;
 
   function read(): ApprovalFile {
     let raw: string;
     try {
       raw = readFileSync(file, "utf8");
     } catch {
+      witnessHash = null;
       return emptyFile();
     }
-    return parseFile(raw);
+
+    const currentHash = computeHash(raw);
+    if (witnessHash !== null && currentHash !== witnessHash) {
+      opts.onTamper?.("approvals.json modified externally; forged approvals purged");
+      const empty = emptyFile();
+      write(empty);
+      return empty;
+    }
+
+    const parsed = parseFile(raw);
+    witnessHash = currentHash;
+    try {
+      chmodSync(file, 0o400);
+    } catch {}
+    return parsed;
   }
 
   function write(data: ApprovalFile): void {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(tmpFile, JSON.stringify(data), "utf8");
+    const raw = JSON.stringify(data, null, 2);
+    witnessHash = computeHash(raw);
+    writeFileSync(tmpFile, raw, { mode: 0o400, encoding: "utf8" });
     renameSync(tmpFile, file);
+    try {
+      chmodSync(file, 0o400);
+    } catch {}
   }
 
   return {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -146,6 +146,23 @@ describe("appendAudit", () => {
     });
     const parsed = JSON.parse(readLines(ws)[0]);
     expect(parsed.ruleId).toBe("block:rm-root");
+  });
+
+  test("audit.jsonl is locked with mode 0o400 preventing unauthorized truncate/write", () => {
+    const ws = workspace();
+    appendAudit(ws, baseEntry("command 1"));
+
+    const auditFile = join(ws, ".guardian-angel", "audit.jsonl");
+    const mode = statSync(auditFile).mode & 0o777;
+    expect(mode).toBe(0o400);
+
+    // Direct unauthorized write/truncate fails with EACCES
+    expect(() => writeFileSync(auditFile, "truncate attack", "utf8")).toThrow();
+
+    // Legitimate appendAudit still succeeds and preserves 0o400 mode
+    appendAudit(ws, baseEntry("command 2"));
+    expect(readLines(ws)).toHaveLength(2);
+    expect(statSync(auditFile).mode & 0o777).toBe(0o400);
   });
 });
 
