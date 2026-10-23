@@ -278,3 +278,145 @@ describe("ensureStore", () => {
     expect(() => restore(workspace, id)).toThrow("GA_TRASH_REFUSED");
   });
 });
+
+describe("cross-device EXDEV fallback and hash verification", () => {
+  function makeExdevError() {
+    const err = new Error("cross-device link not permitted");
+    (err as any).code = "EXDEV";
+    return err;
+  }
+
+  test("safeDelete falls back to verified copy+delete on EXDEV for a file", () => {
+    const { workspace } = sandbox();
+    const target = join(workspace, "mounted-drive-file.txt");
+    const content = "crucial data across mount point boundary";
+    writeFileSync(target, content, "utf8");
+
+    const id = safeDelete(workspace, "mounted-drive-file.txt", Date.now, {
+      renameSync: () => {
+        throw makeExdevError();
+      },
+    });
+
+    expect(existsSync(target)).toBe(false);
+
+    const meta = JSON.parse(
+      readFileSync(join(trashDir(workspace), id, "meta.json"), "utf8"),
+    );
+    expect(meta.copied).toBe(true);
+    expect(meta.sha256).toBeDefined();
+
+    const restored = restore(workspace, id);
+    expect(restored).toBe(target);
+    expect(readFileSync(target, "utf8")).toBe(content);
+    expect(listTrash(workspace)).toHaveLength(0);
+  });
+
+  test("safeDelete falls back to verified copy+delete on EXDEV for a directory", () => {
+    const { workspace } = sandbox();
+    const dir = join(workspace, "mounted-dir");
+    mkdirSync(join(dir, "sub"), { recursive: true });
+    writeFileSync(join(dir, "a.ts"), "export const a = 1;", "utf8");
+    writeFileSync(join(dir, "sub", "b.json"), JSON.stringify({ ok: true }), "utf8");
+
+    const id = safeDelete(workspace, "mounted-dir", Date.now, {
+      renameSync: () => {
+        throw makeExdevError();
+      },
+    });
+
+    expect(existsSync(dir)).toBe(false);
+
+    const meta = JSON.parse(
+      readFileSync(join(trashDir(workspace), id, "meta.json"), "utf8"),
+    );
+    expect(meta.copied).toBe(true);
+    expect(meta.sha256).toBeDefined();
+
+    restore(workspace, id);
+    expect(existsSync(dir)).toBe(true);
+    expect(readFileSync(join(dir, "a.ts"), "utf8")).toBe("export const a = 1;");
+    expect(readFileSync(join(dir, "sub", "b.json"), "utf8")).toBe(JSON.stringify({ ok: true }));
+  });
+
+  test("safeDelete cleans up and leaves source untouched if EXDEV copy verification fails", () => {
+    const { workspace } = sandbox();
+    const target = join(workspace, "precious.txt");
+    const content = "do not lose me under any circumstances";
+    writeFileSync(target, content, "utf8");
+
+    expect(() =>
+      safeDelete(workspace, "precious.txt", Date.now, {
+        renameSync: () => {
+          throw makeExdevError();
+        },
+        copyFileSync: (_src, dest) => {
+          // Simulate corrupted or truncated copy
+          writeFileSync(dest, "corrupted partial content", "utf8");
+        },
+      }),
+    ).toThrow(/GA_TRASH_EXDEV_VERIFY/);
+
+    // Source must be completely untouched and intact
+    expect(existsSync(target)).toBe(true);
+    expect(readFileSync(target, "utf8")).toBe(content);
+
+    // Trash must be cleaned up
+    expect(listTrash(workspace)).toHaveLength(0);
+  });
+
+  test("restore falls back to copy+unlink when renameSync throws EXDEV", () => {
+    const { workspace } = sandbox();
+    const target = join(workspace, "restore-exdev.txt");
+    const content = "content restored across filesystem boundary";
+    writeFileSync(target, content, "utf8");
+
+    const id = safeDelete(workspace, "restore-exdev.txt");
+
+    const restored = restore(workspace, id, {
+      renameSync: () => {
+        throw makeExdevError();
+      },
+    });
+
+    expect(restored).toBe(target);
+    expect(readFileSync(target, "utf8")).toBe(content);
+    expect(listTrash(workspace)).toHaveLength(0);
+  });
+
+  test("restore refuses to restore if payload has been corrupted or tampered with", () => {
+    const { workspace } = sandbox();
+    const target = join(workspace, "tamper-check.txt");
+    writeFileSync(target, "authentic original bytes", "utf8");
+
+    const id = safeDelete(workspace, "tamper-check.txt");
+    const payloadPath = join(trashDir(workspace), id, "payload");
+
+    // Tamper with payload in trash
+    writeFileSync(payloadPath, "tampered modified bytes", "utf8");
+
+    expect(() => restore(workspace, id)).toThrow(/GA_TRASH_RESTORE_HASH_MISMATCH/);
+
+    // Target must not be created with corrupted bytes
+    expect(existsSync(target)).toBe(false);
+  });
+
+  test("safeDelete refuses directory containing a symlink during EXDEV copy", () => {
+    const { workspace, outside } = sandbox();
+    const dir = join(workspace, "dir-with-symlink");
+    mkdirSync(dir, { recursive: true });
+    const extFile = join(outside, "secret.txt");
+    writeFileSync(extFile, "secret", "utf8");
+    symlinkSync(extFile, join(dir, "link.txt"));
+
+    expect(() =>
+      safeDelete(workspace, "dir-with-symlink", Date.now, {
+        renameSync: () => {
+          throw makeExdevError();
+        },
+      }),
+    ).toThrow(/GA_TRASH_REFUSED: symlink in dir/);
+
+    expect(existsSync(dir)).toBe(true);
+  });
+});

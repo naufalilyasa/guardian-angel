@@ -169,7 +169,7 @@ Setiap workspace yang dilindungi memiliki direktori lokal:
 ```bash
 bun test
 ```
-*561 test passing / 0 fail / 1216 expect calls / 22 test files.*
+*606 test passing / 0 fail / 1380 expect calls / 23 test files.*
 
 ### 2. Destructive 20-Case Smoke Suite
 Menguji 20 skenario destruktif nyata (quoted path `rm`, overwrite `>`, SQL multi-payload DROP, wrappers, path traversal, git clean):
@@ -207,7 +207,8 @@ Sesuai prinsip transparansi keamanan, batas kemampuan guard didokumentasikan sec
 - **Pipe ke Shell & Dynamic Substitution Kini Gated**: Perintah yang mem-pipe data ke shell interpreter (`echo <base64> | base64 -d | bash`, `cat script.sh | sh`, `find | xargs sh`) otomatis di-gate ke `ask:pipe-to-shell` / `ask:xargs-shell`. Substitusi dinamis dalam `eval "$(base64 -d ...)"` di-gate ke `ask:variable-command`. Command word ber-escape heksadesimal (`$'\x72\x6d' -rf /`) di-unescape dan diblokir sebagai `block:rm-root`.
 - **SSH Remoting Kini Di-unwrap & Diinspeksi**: Perintah remote lewat `ssh [flags] host "command"` di-unwrap dan diinspeksi secara rekursif (termasuk ssh bertingkat dan `-o ProxyCommand`). Jika remote command destruktif (`rm -rf /`, `DROP TABLE`) maka langsung `block`; jika mutatif maka `ask`; jika memuat remote `rm` maka di-gate `ask:remote-rm` (karena tidak ada `ga trash` di remote host); dan ssh interaktif tanpa remote command tetap `allow`.
 - **File Skrip Interpreter Kini Diinspeksi (Script Content Gate)**: Eksekusi file skrip (`python3 script.py`, `node server.js`, `bash build.sh`, `./script.py`) diinspeksi kontennya jika file ada di disk. Jika skrip mencoba memodifikasi store (`.guardian-angel`) atau `.git` maka langsung `block`; jika memuat perintah destruktif (`rm -rf /`, `shutil.rmtree('/')`, `DROP TABLE`) maka `block`; jika memuat eksekusi dinamis/obfuscated (`eval`, `exec`, base64 decoding) di luar direktori vendor/build maka `ask`; skrip di luar workspace atau file binary tidak terbaca `ask`; dan skrip bersih tetap `allow`. Approval di-scope per-file path (bukan per-workspace). Residual: skrip yang belum ada di disk saat parse atau dengan konstruksi string dinamis ekstrim tetap memerlukan isolasi OS.
-- **Volume Tunggal Trash**: Mekanisme `ga trash` menggunakan `fs.renameSync` atomic O(1); jika target berada di filesystem/mount device berbeda (`EXDEV`), operasi ditolak secara fail-closed tanpa fallback copy+delete.
+- **Dukungan Cross-Volume Trash & Verifikasi Integritas SHA-256**: Mekanisme `ga trash` menggunakan `fs.renameSync` atomic O(1) sebagai fast-path; jika target berada di filesystem/mount device berbeda (`EXDEV`), guard secara otomatis fallback ke copy+verify+delete terverifikasi SHA-256 (file dan direktori). Metadata `meta.json` mencatat `sha256` dan `copied: true`. Saat `ga restore`, integritas payload diverifikasi ulang dengan hash sebelum dipulihkan, dan restore lintas-device juga mendukung fallback verifikasi hash yang sama. Jika verifikasi gagal di tahap mana pun, file asli tidak pernah dihapus.
+- **Isolasi Store Level OS**: Store `.guardian-angel` dilindungi di level guard (classifier, tool interception, write-verbs, interpreter scan, script gate). Namun karena store berada di dalam workspace pada user OS yang sama dengan proses agent, isolasi anti-tamper level kernel penuh dari proses non-guard (misal malware root/setuid di host) memerlukan proteksi sistem file eksternal atau isolasi OS (lihat PRD `os-isolation-store.prd.md`).
 
 ---
 

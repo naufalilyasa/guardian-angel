@@ -1,4 +1,5 @@
 import {
+  copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -6,6 +7,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
@@ -19,9 +21,107 @@ export type TrashEntry = {
   originalPath: string;
   deletedAt: string;
   kind: "file" | "dir";
+  sha256?: string;
+  copied?: boolean;
+};
+
+export type TrashFsOps = {
+  renameSync: (oldPath: string, newPath: string) => void;
+  copyFileSync: (src: string, dest: string) => void;
+  unlinkSync: (path: string) => void;
+  rmSync: (path: string, options?: { recursive?: boolean; force?: boolean }) => void;
+};
+
+const defaultFsOps: TrashFsOps = {
+  renameSync,
+  copyFileSync,
+  unlinkSync,
+  rmSync,
 };
 
 export const TRASH_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_EXDEV_TREE_BYTES = 512 * 1024 * 1024; // 512 MB limit
+
+function computeFileSha256(filePath: string): string {
+  return createHash("sha256").update(readFileSync(filePath)).digest("hex");
+}
+
+type TreeManifest = {
+  manifestHash: string;
+  files: Record<string, string>;
+  totalBytes: number;
+};
+
+function computeTreeManifest(rootDir: string): TreeManifest {
+  const files: Record<string, string> = {};
+  let totalBytes = 0;
+
+  function walk(current: string) {
+    const entries = readdirSync(current).sort();
+    for (const name of entries) {
+      const fullPath = join(current, name);
+      const stat = lstatSync(fullPath);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`GA_TRASH_REFUSED: symlink in dir: ${fullPath}`);
+      }
+      if (stat.isDirectory()) {
+        walk(fullPath);
+      } else if (stat.isFile()) {
+        totalBytes += stat.size;
+        if (totalBytes > MAX_EXDEV_TREE_BYTES) {
+          throw new Error("GA_TRASH_REFUSED: directory exceeds 512MB limit for cross-device copy");
+        }
+        const rel = relative(rootDir, fullPath);
+        files[rel] = computeFileSha256(fullPath);
+      }
+    }
+  }
+
+  walk(rootDir);
+  const hasher = createHash("sha256");
+  for (const k of Object.keys(files).sort()) {
+    hasher.update(`${k}:${files[k]}\n`);
+  }
+  return { manifestHash: hasher.digest("hex"), files, totalBytes };
+}
+
+function copyTreeVerified(srcDir: string, destDir: string, fsOps: TrashFsOps, manifest?: TreeManifest): string {
+  const srcManifest = manifest ?? computeTreeManifest(srcDir);
+  mkdirSync(destDir, { recursive: true });
+
+  try {
+    for (const rel of Object.keys(srcManifest.files).sort()) {
+      const srcFile = join(srcDir, rel);
+      const destFile = join(destDir, rel);
+      mkdirSync(dirname(destFile), { recursive: true });
+      fsOps.copyFileSync(srcFile, destFile);
+      if (computeFileSha256(destFile) !== srcManifest.files[rel]) {
+        throw new Error(`GA_TRASH_EXDEV_VERIFY: checksum mismatch for ${rel}`);
+      }
+    }
+
+    function copyEmptyDirs(currentSrc: string) {
+      for (const name of readdirSync(currentSrc)) {
+        const fullSrc = join(currentSrc, name);
+        if (lstatSync(fullSrc).isDirectory()) {
+          const rel = relative(srcDir, fullSrc);
+          mkdirSync(join(destDir, rel), { recursive: true });
+          copyEmptyDirs(fullSrc);
+        }
+      }
+    }
+    copyEmptyDirs(srcDir);
+
+    const destManifest = computeTreeManifest(destDir);
+    if (destManifest.manifestHash !== srcManifest.manifestHash) {
+      throw new Error("GA_TRASH_EXDEV_VERIFY: tree manifest mismatch");
+    }
+    return destManifest.manifestHash;
+  } catch (err) {
+    rmSync(destDir, { recursive: true, force: true });
+    throw err;
+  }
+}
 
 function makeId(target: string, nowMs: number): string {
   const stamp = new Date(nowMs).toISOString().replace(/[:.]/g, "-");
@@ -54,7 +154,9 @@ function readEntry(workspace: string, id: string): TrashEntry | null {
       typeof parsed.id !== "string" ||
       typeof parsed.originalPath !== "string" ||
       typeof parsed.deletedAt !== "string" ||
-      (parsed.kind !== "file" && parsed.kind !== "dir")
+      (parsed.kind !== "file" && parsed.kind !== "dir") ||
+      (parsed.sha256 !== undefined && typeof parsed.sha256 !== "string") ||
+      (parsed.copied !== undefined && typeof parsed.copied !== "boolean")
     ) {
       return null;
     }
@@ -105,19 +207,68 @@ function validateSafeDelete(workspace: string, resolved: string) {
   return stats;
 }
 
+function performSafeDeleteMove(
+  resolved: string,
+  payloadPath: string,
+  kind: TrashEntry["kind"],
+  dir: string,
+  fsOps: TrashFsOps,
+): { sha256: string; copied?: boolean } {
+  const sourceHash =
+    kind === "file"
+      ? computeFileSha256(resolved)
+      : computeTreeManifest(resolved).manifestHash;
+
+  try {
+    fsOps.renameSync(resolved, payloadPath);
+    return { sha256: sourceHash };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EXDEV") {
+      rmSync(dir, { recursive: true, force: true });
+      throw error;
+    }
+  }
+
+  // Cross-device fallback: copy, verify hash, then delete source
+  try {
+    if (kind === "file") {
+      fsOps.copyFileSync(resolved, payloadPath);
+      const destHash = computeFileSha256(payloadPath);
+      if (destHash !== sourceHash) {
+        throw new Error(`GA_TRASH_EXDEV_VERIFY: checksum mismatch during cross-device copy: ${resolved}`);
+      }
+      fsOps.unlinkSync(resolved);
+    } else {
+      const destHash = copyTreeVerified(resolved, payloadPath, fsOps);
+      if (destHash !== sourceHash) {
+        throw new Error(`GA_TRASH_EXDEV_VERIFY: directory manifest mismatch during cross-device copy: ${resolved}`);
+      }
+      fsOps.rmSync(resolved, { recursive: true, force: true });
+    }
+    return { sha256: sourceHash, copied: true };
+  } catch (err) {
+    rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+}
+
 /**
  * Safely move a file or directory inside the workspace into `.guardian-angel/trash`.
  * Refuses paths outside workspace, protected store paths, and symlinks.
+ * Fallback to verified copy+delete when cross-device (EXDEV) is encountered.
  *
  * @param workspace - The workspace root path
  * @param target - The path to move to trash
  * @param now - Optional timestamp supplier (defaults to Date.now)
+ * @param fsOps - Optional custom filesystem operations for testing
  * @returns The unique trash entry ID
  */
 export function safeDelete(
   workspace: string,
   target: string,
   now: () => number = Date.now,
+  fsOps?: Partial<TrashFsOps>,
 ): string {
   const resolved = resolveLexical(workspace, target);
   const stats = validateSafeDelete(workspace, resolved);
@@ -130,24 +281,25 @@ export function safeDelete(
   mkdirSync(dir, { recursive: true });
 
   const kind: TrashEntry["kind"] = stats.isDirectory() ? "dir" : "file";
+  const payloadPath = join(dir, "payload");
+  const effectiveFs: TrashFsOps = { ...defaultFsOps, ...fsOps };
+
+  const { sha256, copied } = performSafeDeleteMove(
+    resolved,
+    payloadPath,
+    kind,
+    dir,
+    effectiveFs,
+  );
+
   const entry: TrashEntry = {
     id,
     originalPath: resolved,
     deletedAt: new Date(nowMs).toISOString(),
     kind,
+    sha256,
+    ...(copied ? { copied: true } : {}),
   };
-
-  const payloadPath = join(dir, "payload");
-  try {
-    renameSync(resolved, payloadPath);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    rmSync(dir, { recursive: true, force: true });
-    if (code === "EXDEV") {
-      throw new Error(`GA_TRASH_REFUSED: cross-device rename: ${resolved}`);
-    }
-    throw error;
-  }
 
   writeFileSync(join(dir, "meta.json"), JSON.stringify(entry, null, 2), "utf8");
   return id;
@@ -173,14 +325,64 @@ export function listTrash(workspace: string): TrashEntry[] {
   return entries.sort((a, b) => (a.deletedAt < b.deletedAt ? 1 : -1));
 }
 
+function performRestoreMove(
+  payload: string,
+  targetPath: string,
+  kind: TrashEntry["kind"],
+  expectedSha256: string | undefined,
+  fsOps: TrashFsOps,
+): void {
+  // 1. Verify payload integrity before moving if expectedSha256 exists
+  if (expectedSha256) {
+    const currentHash =
+      kind === "file"
+        ? computeFileSha256(payload)
+        : computeTreeManifest(payload).manifestHash;
+    if (currentHash !== expectedSha256) {
+      throw new Error("GA_TRASH_RESTORE_HASH_MISMATCH: payload checksum mismatch");
+    }
+  }
+
+  // 2. Fast-path atomic rename
+  try {
+    fsOps.renameSync(payload, targetPath);
+    return;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "EXDEV") throw err;
+  }
+
+  // 3. Cross-device fallback copy + verify + unlink
+  if (kind === "file") {
+    fsOps.copyFileSync(payload, targetPath);
+    const restoredHash = computeFileSha256(targetPath);
+    if (expectedSha256 && restoredHash !== expectedSha256) {
+      fsOps.unlinkSync(targetPath);
+      throw new Error("GA_TRASH_RESTORE_HASH_MISMATCH: checksum mismatch restoring cross-device");
+    }
+  } else {
+    const restoredHash = copyTreeVerified(payload, targetPath, fsOps);
+    if (expectedSha256 && restoredHash !== expectedSha256) {
+      fsOps.rmSync(targetPath, { recursive: true, force: true });
+      throw new Error("GA_TRASH_RESTORE_HASH_MISMATCH: directory manifest mismatch restoring cross-device");
+    }
+  }
+}
+
 /**
  * Restore a trashed item back to its original location.
+ * Verifies SHA-256 payload integrity if recorded, and supports cross-device fallback.
  *
  * @param workspace - The workspace root path
  * @param id - The trash entry ID to restore
+ * @param fsOps - Optional custom filesystem operations for testing
  * @returns The restored file path
  */
-export function restore(workspace: string, id: string): string {
+export function restore(
+  workspace: string,
+  id: string,
+  fsOps?: Partial<TrashFsOps>,
+): string {
   const entry = readEntry(workspace, id);
   if (!entry) throw new Error(`GA_TRASH_NOT_FOUND: ${id}`);
 
@@ -203,7 +405,9 @@ export function restore(workspace: string, id: string): string {
   }
 
   mkdirSync(dirname(entry.originalPath), { recursive: true });
-  renameSync(payload, entry.originalPath);
+  const effectiveFs: TrashFsOps = { ...defaultFsOps, ...fsOps };
+
+  performRestoreMove(payload, entry.originalPath, entry.kind, entry.sha256, effectiveFs);
   rmSync(dir, { recursive: true, force: true });
   return entry.originalPath;
 }
