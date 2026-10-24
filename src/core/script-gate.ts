@@ -148,6 +148,8 @@ function extractScriptCandidate(tokens: string[]): string | null {
   if (prog === "node" || prog === "nodejs") return extractNodeScript(tokens);
   if (prog === "bun") return extractBunScript(tokens);
   if (prog === "deno") return extractDenoScript(tokens);
+  // `source`/`.` execute a script in the current shell — same blast radius as `sh file.sh`.
+  if (prog === "source" || prog === ".") return extractShellScript(tokens);
   if (SHELLS.has(prog)) return extractShellScript(tokens);
 
   if (OTHER_INTERPRETERS.has(prog)) {

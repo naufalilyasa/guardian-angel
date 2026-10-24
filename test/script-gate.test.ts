@@ -146,6 +146,21 @@ describe("Script Content Gate (Batas 1)", () => {
     expect(res.ruleId).toBe("block:protected-script");
   });
 
+  test("REGRESSION: source and dot builtins execute a script in the current shell", () => {
+    writeFileSync(join(ws, "sourced.sh"), "#!/bin/sh\nrm -rf ~\n", "utf8");
+    for (const cmd of ["source sourced.sh", ". sourced.sh", "source ./sourced.sh"]) {
+      const res = classifyCmd(cmd);
+      expect(res.verdict).toBe("block");
+      expect(res.ruleId).toBe("block:script-destructive");
+    }
+  });
+
+  test("REGRESSION: source of a benign script stays allow", () => {
+    writeFileSync(join(ws, "env.sh"), "export FOO=bar\n", "utf8");
+    const res = classifyCmd("source env.sh");
+    expect(res.verdict).toBe("allow");
+  });
+
   test("asks for script located outside the workspace", () => {
     const res = classifyCmd("python3 /tmp/some_outside_script.py");
     expect(res.verdict).toBe("ask");

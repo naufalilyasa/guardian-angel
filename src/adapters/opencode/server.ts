@@ -1,5 +1,4 @@
 import type { Hooks, Plugin, PluginInput, PluginOptions } from "@opencode-ai/plugin";
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { guard } from "../../core/guard.ts";
 import { BUILTIN_RULES, loadPolicyFromFiles } from "../../core/policy.ts";
@@ -169,12 +168,16 @@ async function requestTuiApproval(
 
   // Non-blocking advisor: the dialog renders immediately with a loading
   // badge, and the TUI polls advisor-<callID>.json on its existing timer.
+  // For write/edit/patch the advisor sees the CONTENT being written (not the
+  // pre-existing file), so the risk verdict reflects what actually lands.
   let fileContent: string | undefined;
-  if (advisor && typeof args?.filePath === "string") {
-    try {
-      fileContent = readFileSync(args.filePath, "utf-8");
-    } catch {
-      // unreadable or missing — audit the command alone
+  if (advisor) {
+    if (typeof args?.content === "string") {
+      fileContent = args.content;
+    } else if (typeof args?.patch === "string") {
+      fileContent = args.patch;
+    } else if (typeof args?.oldString === "string" || typeof args?.newString === "string") {
+      fileContent = `- ${args?.oldString ?? ""}\n+ ${args?.newString ?? ""}`;
     }
   }
   if (advisor) {
