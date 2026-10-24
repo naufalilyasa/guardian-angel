@@ -1,4 +1,5 @@
 import type { Hooks, Plugin, PluginInput, PluginOptions } from "@opencode-ai/plugin";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { guard } from "../../core/guard.ts";
 import { BUILTIN_RULES, loadPolicyFromFiles } from "../../core/policy.ts";
@@ -21,6 +22,12 @@ import {
   writeRequest,
 } from "./ipc.ts";
 import type { IpcRequest } from "./types.ts";
+import {
+  queryAdvisor,
+  resolveAdvisorModel,
+  writeAdvisorStatus,
+  type AdvisorSdkClient,
+} from "./advisor-client.ts";
 
 export function shellQuote(value: string): string {
   if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(value)) return value;
@@ -121,6 +128,8 @@ export type ServerHandlerDeps = {
   guardFn?: typeof guard;
   loadPolicy?: typeof loadPolicyFromFiles;
   now?: () => number;
+  advisorClient?: AdvisorSdkClient;
+  advisorModel?: string;
 };
 
 function loadEffectivePolicy(loadPolicy: typeof loadPolicyFromFiles, workspace: string) {
@@ -143,6 +152,7 @@ async function requestTuiApproval(
   cacheKey: string,
   timeoutMs: number,
   nowFn: () => number,
+  advisor?: { client: AdvisorSdkClient; model?: string; workspace: string; onResult?: (entry: { risk_level: string; summary: string }) => void },
 ): Promise<{ approved: boolean; denialReason?: ConfirmDenialReason }> {
   const deadline = timeoutMs > 0 ? nowFn() + timeoutMs : 0;
   const req: IpcRequest = {
@@ -156,6 +166,39 @@ async function requestTuiApproval(
     createdAt: nowFn(),
     deadline,
   };
+
+  // Non-blocking advisor: the dialog renders immediately with a loading
+  // badge, and the TUI polls advisor-<callID>.json on its existing timer.
+  let fileContent: string | undefined;
+  if (advisor && typeof args?.filePath === "string") {
+    try {
+      fileContent = readFileSync(args.filePath, "utf-8");
+    } catch {
+      // unreadable or missing — audit the command alone
+    }
+  }
+  if (advisor) {
+    writeAdvisorStatus(input.callID, { status: "loading", model: advisor.model }, ipcDir);
+    void queryAdvisor({
+      client: advisor.client,
+      command: typeof args?.command === "string" ? args.command : `${input.tool} ${args?.filePath ?? ""}`,
+      fileContent,
+      filePath: typeof args?.filePath === "string" ? args.filePath : undefined,
+      model: advisor.model,
+      directory: advisor.workspace,
+    }).then((outcome) => {
+      writeAdvisorStatus(
+        input.callID,
+        outcome.result
+          ? { status: "ready", result: outcome.result, model: outcome.model }
+          : { status: "error", error: outcome.error ?? "unknown advisor error", model: outcome.model },
+        ipcDir,
+      );
+      if (outcome.result && advisor.onResult) {
+        advisor.onResult({ risk_level: outcome.result.riskLevel, summary: outcome.result.summary });
+      }
+    });
+  }
 
   try {
     const nonce = writeRequest(req, ipcDir);
@@ -236,12 +279,14 @@ async function executeHookLogic(
   let isHeadlessNoTui = false;
   let lastAskReason: string | undefined;
 
+  const audit = createAuditSink(workspace);
+
   const guardDeps: GuardDeps = {
     workspace,
     sessionId,
     policy,
     approvals: createApprovalStore({ workspace }),
-    audit: createAuditSink(workspace),
+    audit,
     now: nowFn,
     confirm: async (title: string, message: string): Promise<ConfirmResult> => {
       lastAskReason = message;
@@ -258,6 +303,24 @@ async function executeHookLogic(
         cacheKey,
         timeoutMs,
         nowFn,
+        deps.advisorClient !== undefined
+          ? {
+              client: deps.advisorClient,
+              model: resolveAdvisorModel(workspace, deps.advisorModel),
+              workspace,
+              onResult: (entry) => {
+                // Forensic trail: the advisor verdict is recorded but never
+                // used to gate execution — the human's choice does that.
+                audit.append({
+                  tier: "ask",
+                  sessionId,
+                  tool: input.tool,
+                  command: typeof output?.args?.command === "string" ? output.args.command : undefined,
+                  advisor: entry,
+                } as Record<string, unknown>);
+              },
+            }
+          : undefined,
       );
     },
   };
@@ -285,6 +348,8 @@ export const GuardianAngelServer: Plugin = async (
     pkgRoot,
     ipcDir: options?.ipcDir as string | undefined,
     confirmTimeoutMs: (options?.confirmTimeoutMs as number) ?? 0,
+    advisorClient: input.client as AdvisorSdkClient | undefined,
+    advisorModel: (options?.advisorModel as string | undefined) ?? undefined,
   });
 
   return {

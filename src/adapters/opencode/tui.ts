@@ -133,6 +133,15 @@ export const GuardianAngelTui: TuiPlugin = async (
           view,
           choices,
           settle,
+          advisor: {
+            callID: req.callID,
+            ipcDir,
+            // api.client lets the user press `r` to re-run a failed audit
+            // without a round-trip through the server plugin.
+            client: api.client as never,
+            command: req.command ?? `${req.tool} ${req.path ?? ""}`.trim(),
+            filePath: req.path,
+          },
         });
         return;
       }

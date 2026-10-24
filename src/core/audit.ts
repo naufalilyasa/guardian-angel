@@ -11,6 +11,8 @@ export type AuditEntry = {
   reason?: string;
   scopeKey?: string;
   command?: string;
+  /** LLM Security Advisor verdict, recorded for forensic review. */
+  advisor?: { risk_level: string; summary: string };
 };
 
 // Redaction is a deny-list of *shapes*, not a list of exact key names: a new

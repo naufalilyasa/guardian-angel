@@ -2,12 +2,26 @@ import { createSignal, onCleanup, For, Show } from "solid-js";
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui";
 import type { GuardRequestView, GuardChoice } from "./permission-view.js";
 import { shouldHandleRequest } from "./session-routing.ts";
+import { readAdvisorStatus } from "./ipc.ts";
+import { queryAdvisor, type AdvisorIpcEntry, type AdvisorSdkClient } from "./advisor-client.ts";
+
+export interface AdvisorPanelProps {
+  /** IPC callID of the pending approval request (advisor-<callID>.json). */
+  callID: string;
+  ipcDir: string;
+  /** SDK client from `api.client`; enables the `r` retry key. */
+  client?: AdvisorSdkClient;
+  model?: string;
+  command: string;
+  filePath?: string;
+}
 
 export interface QuestionDialogProps {
   api: TuiPluginApi;
   view: GuardRequestView;
   choices: GuardChoice[];
   onSettle: (decision: "allow" | "deny") => void;
+  advisor?: AdvisorPanelProps;
 }
 
 export interface PromptSlotItem {
@@ -15,6 +29,7 @@ export interface PromptSlotItem {
   view: GuardRequestView;
   choices: GuardChoice[];
   settle: (decision: "allow" | "deny") => void;
+  advisor?: AdvisorPanelProps;
 }
 
 export interface PromptSlotWrapperProps {
@@ -87,6 +102,7 @@ export function PromptSlotWrapper(props: PromptSlotWrapperProps) {
             view={item().view}
             choices={item().choices}
             onSettle={item().settle}
+            advisor={item().advisor}
           />
         )}
       </Show>
@@ -112,10 +128,49 @@ const VERTICAL_BAR_BORDER = {
 export function QuestionDialog(props: QuestionDialogProps) {
   const [selectedIndex, setSelectedIndex] = createSignal(0);
   const [expanded, setExpanded] = createSignal(false);
+  const [advisorEntry, setAdvisorEntry] = createSignal<AdvisorIpcEntry | null>(null);
   let scrollboxRef: any = null;
   let hintTextRef: any = null;
   let footerHintRef: any = null;
   let settled = false;
+
+  // Advisor: poll advisor-<callID>.json on a 200ms timer. Non-blocking — the
+  // dialog renders immediately and the badge fills in when the model answers.
+  const advisorProps = () => props.advisor;
+  let advisorTimer: ReturnType<typeof setInterval> | undefined;
+  if (advisorProps()) {
+    const a = advisorProps()!;
+    const refresh = () => {
+      const entry = readAdvisorStatus<AdvisorIpcEntry>(a.callID, a.ipcDir);
+      if (entry) setAdvisorEntry(entry);
+    };
+    refresh();
+    advisorTimer = setInterval(refresh, 200);
+  }
+  onCleanup(() => {
+    if (advisorTimer) clearInterval(advisorTimer);
+  });
+
+  // `r` retries a failed advisor analysis directly through the TUI's own SDK
+  // client. Only armed when the last known status is "error".
+  const retryAdvisor = () => {
+    const a = advisorProps();
+    if (!a || !a.client) return;
+    if (advisorEntry()?.status !== "error") return;
+    setAdvisorEntry({ callID: a.callID, status: "loading", updatedAt: Date.now() });
+    void queryAdvisor({
+      client: a.client,
+      command: a.command,
+      filePath: a.filePath,
+      model: a.model ?? advisorEntry()?.model,
+    }).then((outcome) => {
+      setAdvisorEntry(
+        outcome.result
+          ? { callID: a.callID, status: "ready", result: outcome.result, model: outcome.model, updatedAt: Date.now() }
+          : { callID: a.callID, status: "error", error: outcome.error ?? "unknown advisor error", model: outcome.model, updatedAt: Date.now() },
+      );
+    });
+  };
 
   const settleOnce = (decision: "allow" | "deny") => {
     if (settled) return;
@@ -248,6 +303,14 @@ export function QuestionDialog(props: QuestionDialogProps) {
             settleOnce("deny");
           },
         },
+        {
+          name: "guardian.advisor_retry",
+          title: "Retry Security Advisor",
+          category: "Guardian Angel",
+          run() {
+            retryAdvisor();
+          },
+        },
       ],
       bindings: [
         { key: "up", cmd: "guardian.up" },
@@ -259,6 +322,7 @@ export function QuestionDialog(props: QuestionDialogProps) {
         { key: "pagedown", cmd: "guardian.scroll_down" },
         { key: "1", cmd: "guardian.1" },
         { key: "2", cmd: "guardian.2" },
+        { key: "r", cmd: "guardian.advisor_retry" },
         { key: "return", cmd: "guardian.confirm" },
         { key: "escape", cmd: "guardian.escape" },
       ],
@@ -271,12 +335,20 @@ export function QuestionDialog(props: QuestionDialogProps) {
   const theme = () => props.api.theme?.current ?? {
     warning: "#f5a742",
     accent: "#9d7cd8",
+    success: "#7fd88f",
+    error: "#e06c75",
     text: "#eeeeee",
     textMuted: "#808080",
     backgroundPanel: "#141414",
     backgroundElement: "#1e1e1e",
     border: "#484848",
   };
+
+  const BADGE = {
+    low: { glyph: "🟢", label: "Safe", color: () => theme().success },
+    medium: { glyph: "🟡", label: "Caution", color: () => theme().warning },
+    high: { glyph: "🔴", label: "Dangerous", color: () => theme().error },
+  } as const;
 
   // 3. Fallback direct listener on keyInput only when keymap layer is not available
   // (e.g. test environments and raw terminals).
@@ -323,6 +395,10 @@ export function QuestionDialog(props: QuestionDialogProps) {
           key.stopPropagation?.();
         } else if (name === "escape" || key.sequence === "\x1b") {
           settleOnce("deny");
+          key.preventDefault?.();
+          key.stopPropagation?.();
+        } else if (name === "r" || key.sequence === "r") {
+          retryAdvisor();
           key.preventDefault?.();
           key.stopPropagation?.();
         }
@@ -407,6 +483,56 @@ export function QuestionDialog(props: QuestionDialogProps) {
         <text fg={theme().textMuted}>Why:</text>
         <text fg={theme().text}>{props.view.reason}</text>
       </box>
+
+      {/* LLM Security Advisor card (non-blocking; omits when no advisor configured) */}
+      <Show when={advisorProps()} fallback={<box width={0} height={0} />}>
+        <box paddingLeft={2} flexDirection="column" gap={0}>
+          <Show
+            when={advisorEntry()?.status === "ready" ? advisorEntry()?.result : undefined}
+            fallback={
+              <Show
+                when={advisorEntry()?.status === "error"}
+                fallback={
+                  <box flexDirection="row" gap={1}>
+                    <text fg={theme().textMuted}>Advisor:</text>
+                    <text fg={theme().textMuted}>analyzing…</text>
+                  </box>
+                }
+              >
+                <box flexDirection="row" gap={1}>
+                  <text fg={theme().error}>Advisor:</text>
+                  <text fg={theme().error}>
+                    {advisorEntry()?.error ?? "error"} — press r to retry
+                  </text>
+                </box>
+              </Show>
+            }
+          >
+            {(result) => {
+              const res = result();
+              const badge = BADGE[res.riskLevel];
+              return (
+                <box flexDirection="column" gap={0}>
+                  <box flexDirection="row" gap={1}>
+                    <text fg={badge.color()} attributes={1 /* BOLD */}>
+                      {badge.glyph} {badge.label}
+                    </text>
+                    <text fg={theme().textMuted}>
+                      {res.isReversible ? "reversible" : "irreversible"}
+                    </text>
+                  </box>
+                  <text fg={theme().text}>{res.summary}</text>
+                  <Show when={res.affectedResources.length > 0}>
+                    <text fg={theme().textMuted}>
+                      {"touches: " + res.affectedResources.slice(0, 3).join(", ")}
+                    </text>
+                  </Show>
+                </box>
+              );
+            }}
+          </Show>
+        </box>
+      </Show>
 
       {/* Numbered Choices List (no search box!) */}
       <box flexDirection="column" gap={1} paddingTop={1}>

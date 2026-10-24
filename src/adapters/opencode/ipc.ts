@@ -115,6 +115,24 @@ export function readResponse(callID: string, ipcDir = getDefaultIpcDir()): IpcRe
   }
 }
 
+/**
+ * Read the advisor status file for a pending request. Returns null when no
+ * advisor entry exists yet (the query is still in flight or never started).
+ */
+export function readAdvisorStatus<T = unknown>(
+  callID: string,
+  ipcDir = getDefaultIpcDir(),
+): T | null {
+  try {
+    const target = join(ipcDir, `advisor-${callID}.json`);
+    if (!existsSync(target)) return null;
+    const content = readFileSync(target, "utf-8");
+    return JSON.parse(content) as T;
+  } catch {
+    return null;
+  }
+}
+
 export function writeResponse(
   callID: string,
   decision: "allow" | "deny",
@@ -145,17 +163,13 @@ export function writeResponse(
 }
 
 export function cleanupCall(callID: string, ipcDir = getDefaultIpcDir()): void {
-  try {
-    const reqFile = join(ipcDir, `request-${callID}.json`);
-    if (existsSync(reqFile)) unlinkSync(reqFile);
-  } catch {
-    // ignore
-  }
-  try {
-    const resFile = join(ipcDir, `response-${callID}.json`);
-    if (existsSync(resFile)) unlinkSync(resFile);
-  } catch {
-    // ignore
+  for (const prefix of ["request-", "response-", "advisor-"]) {
+    try {
+      const file = join(ipcDir, `${prefix}${callID}.json`);
+      if (existsSync(file)) unlinkSync(file);
+    } catch {
+      // ignore
+    }
   }
 }
 
@@ -193,7 +207,7 @@ export function cleanupStale(ipcDir = getDefaultIpcDir(), maxAgeMs = 120_000): v
 
     for (const f of files) {
       if (
-        (f.startsWith("request-") || f.startsWith("response-")) &&
+        (f.startsWith("request-") || f.startsWith("response-") || f.startsWith("advisor-")) &&
         f.endsWith(".json")
       ) {
         try {
