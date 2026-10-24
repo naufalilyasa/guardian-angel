@@ -312,9 +312,11 @@ async function executeHookLogic(
                 // Forensic trail: the advisor verdict is recorded but never
                 // used to gate execution — the human's choice does that.
                 audit.append({
+                  ts: new Date().toISOString(),
                   tier: "ask",
                   sessionId,
                   tool: input.tool,
+                  ruleId: "advisor",
                   command: typeof output?.args?.command === "string" ? output.args.command : undefined,
                   advisor: entry,
                 } as Record<string, unknown>);
