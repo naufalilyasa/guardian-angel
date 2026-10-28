@@ -13,6 +13,8 @@
     "./tui": "./src/adapters/opencode/tui.ts",
     "./opencode-server": "./src/adapters/opencode/server.ts",
     "./opencode-tui": "./src/adapters/opencode/tui.ts",
+    "./opencode-v2/server": "./src/adapters/opencode-v2/server.ts",
+    "./opencode-v2/tui": "./src/adapters/opencode-v2/tui.tsx",
     "./senpi": "./src/adapters/senpi.ts"
   },
   "scripts": {
@@ -24,6 +26,7 @@
   "devDependencies": {
     "@code-yeongyu/senpi": "2026.10.16",
     "@opencode-ai/plugin": "1.18.2",
+    "@opencode/plugin": "2.2.0",
     "@opentui/core": "^0.6.6",
     "@opentui/solid": "^0.6.6",
     "bun-types": "^1.4.3",

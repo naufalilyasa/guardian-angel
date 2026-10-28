@@ -1,3 +1,4 @@
+/** @jsxImportSource @opentui/solid */
 import { createSignal, onCleanup, For, Show } from "solid-js";
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui";
 import type { GuardRequestView, GuardChoice } from "./permission-view.js";
