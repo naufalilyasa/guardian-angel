@@ -36,13 +36,35 @@ export function normalizeToolInput(
 }
 
 export function resolveAdvisorClient(
+  ctx?: PluginContext,
   opts?: Record<string, unknown>,
 ): AdvisorSdkClient | undefined {
   if (opts?.advisorClient) {
     return opts.advisorClient as AdvisorSdkClient;
   }
-  // v2.1.4 PluginContext has no client (O-1, verified live); tests inject via opts
-  return undefined;
+  // v2.1.4 has no session-API client on ctx; use stateless generate.text
+  // and adapt it to the v1 AdvisorSdkClient shape (session.create+prompt).
+  const genText = (ctx as any)?.generate?.text;
+  if (typeof genText !== "function") return undefined;
+  return {
+    session: {
+      create: async () => ({ data: { id: "guardian-angel-advisor" } }),
+      prompt: async (req: any) => {
+        const body = req?.body ?? {};
+        const user = (body.parts ?? [])
+          .filter((p: any) => p?.type === "text" && typeof p.text === "string")
+          .map((p: any) => p.text)
+          .join("\n");
+        const prompt = [body.system, user].filter(Boolean).join("\n\n");
+        const model = body.model
+          ? { id: body.model.modelID, providerID: body.model.providerID }
+          : undefined;
+        const out = await genText(model ? { prompt, model } : { prompt });
+        const text = typeof out?.text === "string" ? out.text : "";
+        return { data: { parts: text ? [{ type: "text", text }] : [] } };
+      },
+    },
+  } as unknown as AdvisorSdkClient;
 }
 
 /**
@@ -82,7 +104,7 @@ export const GuardianAngelServerV2 = Plugin.define({
       guardFn: opts.guardFn as ServerHandlerDeps["guardFn"],
       loadPolicy: opts.loadPolicy as ServerHandlerDeps["loadPolicy"],
       now: opts.now as ServerHandlerDeps["now"],
-      advisorClient: resolveAdvisorClient(opts),
+      advisorClient: resolveAdvisorClient(ctx, opts),
       advisorModel: (opts.advisorModel as string | undefined) ?? resolveAdvisorModel(workspace),
     });
 

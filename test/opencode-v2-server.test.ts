@@ -84,12 +84,50 @@ describe("OpenCode v2 Server Adapter", () => {
   describe("resolveAdvisorClient", () => {
     test("returns advisorClient from opts if provided", () => {
       const mockClient = { session: { create: async () => ({}), prompt: async () => ({}) } } as any;
-      const client = resolveAdvisorClient({ advisorClient: mockClient });
+      const client = resolveAdvisorClient(undefined, { advisorClient: mockClient });
       expect(client).toBe(mockClient);
     });
 
     test("returns undefined if no client provided", () => {
-      const client = resolveAdvisorClient({});
+      const client = resolveAdvisorClient(undefined, {});
+      expect(client).toBeUndefined();
+    });
+
+    test("adapts ctx.generate.text to the v1 AdvisorSdkClient shape", async () => {
+      const calls: Array<Record<string, unknown>> = [];
+      const ctx = {
+        generate: {
+          text: async (input: Record<string, unknown>) => {
+            calls.push(input);
+            return { text: '{"risk_level":"low","summary":"ok"}' };
+          },
+        },
+      } as any;
+
+      const client = resolveAdvisorClient(ctx, {});
+      expect(client).toBeDefined();
+
+      const created = await client!.session.create({ body: { title: "x" } } as any);
+      expect(created?.data?.id).toBe("guardian-angel-advisor");
+
+      const response = await client!.session.prompt({
+        body: {
+          model: { providerID: "9router", modelID: "ag/gemini-3.6-flash-low" },
+          system: "system-instructions",
+          tools: {},
+          parts: [{ type: "text", text: "user question" }],
+        },
+        path: { id: "s" },
+      } as any);
+
+      expect(calls[0].prompt).toBe("system-instructions\n\nuser question");
+      expect(calls[0].model).toEqual({ id: "ag/gemini-3.6-flash-low", providerID: "9router" });
+      const parts = (response as any)?.data?.parts ?? [];
+      expect(parts[0].text).toBe('{"risk_level":"low","summary":"ok"}');
+    });
+
+    test("returns undefined when ctx has no generate.text", () => {
+      const client = resolveAdvisorClient({ generate: {} } as any, {});
       expect(client).toBeUndefined();
     });
   });
