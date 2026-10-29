@@ -1,6 +1,6 @@
 # Desain Porting Adapter OpenCode v2 (v2.1.4)
 
-Status: Fase 0–2 tervalidasi live (2026-10-28, OpenCode v2.1.4). Menyupersede ADR-0012 untuk target adapter OpenCode (ADR-0013 difilekan di Fase 4).
+Status: Fase 0–2 tervalidasi live termasuk gate TUI interaktif (2026-10-28..29, OpenCode v2.1.4). Menyupersede ADR-0012 untuk target adapter OpenCode (ADR-0013 difilekan di Fase 4).
 
 ### Fakta verifikasi live (2026-10-28, `opencode run --standalone`)
 
@@ -8,7 +8,20 @@ Status: Fase 0–2 tervalidasi live (2026-10-28, OpenCode v2.1.4). Menyupersede 
 - `setup(ctx)` dipanggil; `ctx.tool.hook(\"execute.before\", cb)` tersedia dan `cb` menerima event `{tool, input, sessionID, agent, messageID, id}` persis seperti asumsi §1.2.
 - `ctx.location.directory` = direktori boot daemon (workspace efektif saat ini). Key `ctx` (O-1): `app, location, options, agent, aisdk, command, credential, event, experimental, generate, model, provider, integration, mcp, permission, plugin, reference, rpc, skill, storage, tool, vcs, websearch, worktree, session, shell` — **tidak ada `client`** → advisor client harus lewat `createOpencodeClient` (fallback) atau `opts.advisorClient`.
 - Tool gate **bekerja end-to-end**: `cat /dev/null > canary.txt` → verdict `block` ruleId `ask:write-outside` reason \"TUI is not running\" (fail-closed headless) → tool call dibatalkan, canary utuh.
-- **Bug ditemukan & diperbaiki**: nama tool v2 `\"shell\"` vs v1 `\"bash\"` — tanpa pemetaan, `toToolCall` return null dan hook menjadi no-op (bypass total). Tes v2 diperbarui memakai `\"shell\"\" + test mapping eksplisit.
+- **Bug ditemukan & diperbaiki**: nama tool v2 `"shell"` vs v1 `"bash"` — tanpa pemetaan, `toToolCall` return null dan hook menjadi no-op (bypass total). Tes v2 diperbarui memakai `"shell"` + test mapping eksplisit.
+
+### Fakta verifikasi TUI interaktif (2026-10-29)
+
+- **Plugin TUI tidak bisa berupa file tunggal atau entry `cli.json`** — client mengabaikannya. Menurut docs resmi (<https://opencode.ai/v2/docs/cli/plugins>), TUI plugin = bagian `./tui` dari **package plugin** yang ditemukan di `<global-config>/plugins/<nama>/` (atau `<project>/.opencode/plugins/<nama>/`) dengan layout:
+  ```
+  <global-config>/plugins/guardian-angel/package.json   {"exports": {".": "./index.ts", "./tui": "./tui.tsx"}}
+  <global-config>/plugins/guardian-angel/index.ts       ← server part (dimuat daemon)
+  <global-config>/plugins/guardian-angel/tui.tsx        ← TUI part (dimuat client)
+  ```
+  Shim file tunggal `guardian-angel.ts` hanya dimuat **daemon** (dengan WARN "must be a directory"); client hanya meregistrasi (plugins=14) tanpa pernah mengimpor modulnya (diverifikasi via marker level-modul yang tidak pernah tertulis). Setelah layout direktori diterapkan, client mereconcile plugins=15 dan `context.ui.slot`/`context.keymap` terisi.
+- **Gate interaktif end-to-end terbukti**: heartbeat TUI tertulis di `$TMPDIR/guardian-angel-ipc-<user>/<sha256-16>/tui-heartbeat.json`, hook daemon → rule `ask:write-outside` → dialog muncul di TUI → user allow → approval scope `workspace\0session\0workspace\0ask:write-outside` TTL 24j tercatat, tool diizinkan. Semua layer (hook → guard → IPC → dialog → approval store → audit) urut.
+- **Approval ber-scoped workspace untuk write-outside**: satu allow di sesi ini membuat semua tulisan keluar workspace di sesi yang sama auto-approve 24 jam — catatan UX (default scope tombol allow). Konsisten dengan perilaku v1.
+- Residual: daemon memberi WARN satu kali (ENOENT) untuk path file lama saat transisi; entry plugin manager bisa menampilkan kegagalan basi sampai restart berikutnya.
 
 ## Temuan eksplorasi (fakta repo, 2026-10-28)
 
@@ -200,11 +213,17 @@ Risiko spesifik v2 yang harus ditangani di ipc.ts:
 
 - `.` tetap v1 sampai v1 EOL (mencegah break instalasi yang ada); flip dilakukan sekali di Fase 4 dengan catatan rilis.
 - **Satu devDependency** `@opencode-ai/plugin` di-pin ke rilis yang menyediakan `ctx.tool` (cek inout: rilis tersebut masih mengekspor API v1 `Plugin`/`Hooks` — peta ekspor 1.18.2 menyatukan keduanya, jadi v1 dan v2 hidup berdampingan dalam satu paket; tidak perlu dua dependency/alias).
-- Config instalasi pindah `tui.json` → `~/.config/opencode/cli.json`:
-  ```json
-  { "plugins": ["guardian-angel"] }
+- Config instalasi: **package plugin direktori** (diverifikasi 2026-10-29; `cli.json` HANYA untuk plugin CLI-only per docs <https://opencode.ai/v2/docs/cli/plugins>):
   ```
-  (bentuk opsi `[id, opts]` mengikuti pola v1 `Config.plugin`; skema pastinya dikonfirmasi di Fase 0.)
+  ~/.config/opencode/plugins/guardian-angel/
+    package.json   { "name": "guardian-angel", "type": "module",
+                     "exports": { ".": "./index.ts", "./tui": "./tui.tsx" } }
+    index.ts       export { default, GuardianAngelServerV2 } from "<abs>/src/adapters/opencode-v2/server.ts";
+    tui.tsx        export { default, GuardianAngelTuiV2 } from "<abs>/src/adapters/opencode-v2/tui.tsx";
+  ```
+  - Import harus **path absolut** — daemon bisa boot dari cwd mana pun (bare specifier `guardian-angel-poc` gagal di-resolve saat cwd ≠ repo; diverifikasi).
+  - Daemon memuat `index.ts` (server hooks) saat startup; TUI client memuat `tui.tsx` (slot/keymap/heartbeat). Penambahan file `~/.config/opencode/plugins/guardian-angel.ts` lama → ganti ke layout direktori.
+  - Perubahan layout butuh restart daemon (`opencode service restart`) supaya sisi hook berganti; client reload saat TUI restart.
 - `id: "guardian-angel"` dipakai di **kedua** plugin (daemon server plugin + TUI client plugin). Registri terpisah per proses, jadi id yang sama justru menjaga identitas koheren.
 - File v1 tidak dihapus; dedup `toToolCall`/`shellQuote` dengan `senpi.ts` adalah duplikasi pra-ada yang **bukan bagian port ini** (ditandai, bukan dikerjakan).
 
