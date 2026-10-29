@@ -45,34 +45,34 @@ describe("OpenCode v2 Server Adapter", () => {
 
   describe("normalizeToolInput", () => {
     test("normalizes path to filePath for write tool", () => {
-      const input = { path: "/ws/file.txt", content: "hello" };
-      const normalized = normalizeToolInput("write", input);
-      expect(normalized.filePath).toBe("/ws/file.txt");
-      expect(normalized.path).toBe("/ws/file.txt");
+      const input: Record<string, string> = { path: "/ws/file.txt", content: "hello" };
+      normalizeToolInput("write", input);
+      expect(input.filePath).toBe("/ws/file.txt");
+      expect(input.path).toBe("/ws/file.txt");
     });
 
     test("normalizes path to filePath for edit tool", () => {
-      const input = { path: "/ws/file.txt", oldString: "a", newString: "b" };
-      const normalized = normalizeToolInput("edit", input);
-      expect(normalized.filePath).toBe("/ws/file.txt");
+      const input: Record<string, string> = { path: "/ws/file.txt", oldString: "a", newString: "b" };
+      normalizeToolInput("edit", input);
+      expect(input.filePath).toBe("/ws/file.txt");
     });
 
     test("normalizes path to filePath for patch tool", () => {
-      const input = { path: "/ws/file.txt", patch: "@@ -1 +1 @@" };
-      const normalized = normalizeToolInput("patch", input);
-      expect(normalized.filePath).toBe("/ws/file.txt");
+      const input: Record<string, string> = { path: "/ws/file.txt", patch: "@@ -1 +1 @@" };
+      normalizeToolInput("patch", input);
+      expect(input.filePath).toBe("/ws/file.txt");
     });
 
     test("does not overwrite existing filePath", () => {
-      const input = { path: "/other.txt", filePath: "/correct.txt" };
-      const normalized = normalizeToolInput("write", input);
-      expect(normalized.filePath).toBe("/correct.txt");
+      const input: Record<string, string> = { path: "/other.txt", filePath: "/correct.txt" };
+      normalizeToolInput("write", input);
+      expect(input.filePath).toBe("/correct.txt");
     });
 
     test("leaves bash command input unchanged", () => {
-      const input = { command: "ls -la" };
-      const normalized = normalizeToolInput("bash", input);
-      expect(normalized.command).toBe("ls -la");
+      const input: Record<string, string> = { command: "ls -la" };
+      normalizeToolInput("bash", input);
+      expect(input.command).toBe("ls -la");
     });
 
     test("handles non-object input safely", () => {
@@ -84,12 +84,12 @@ describe("OpenCode v2 Server Adapter", () => {
   describe("resolveAdvisorClient", () => {
     test("returns advisorClient from opts if provided", () => {
       const mockClient = { session: { create: async () => ({}), prompt: async () => ({}) } } as any;
-      const client = resolveAdvisorClient({} as any, { advisorClient: mockClient });
+      const client = resolveAdvisorClient({ advisorClient: mockClient });
       expect(client).toBe(mockClient);
     });
 
     test("returns undefined if no client provided", () => {
-      const client = resolveAdvisorClient({} as any, {});
+      const client = resolveAdvisorClient({});
       expect(client).toBeUndefined();
     });
   });

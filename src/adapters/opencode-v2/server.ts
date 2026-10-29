@@ -15,17 +15,10 @@ export type ToolExecuteBeforeEvent = {
 };
 
 /**
- * Normalizes tool inputs so that both v1 and v2 conventions work interchangeably.
- * For instance, file tools may receive `path` instead of `filePath`.
+ * Mutates `input` in place so v1-shaped guard rules see `filePath`
+ * (v2 file tools send `path`). Mutating the record matters: it is the
+ * same object the v2 tool runner will execute.
  */
-export function normalizeToolInput(
-  tool: string,
-  input: Record<string, unknown>,
-): Record<string, unknown>;
-export function normalizeToolInput(
-  tool: string,
-  input: null | undefined,
-): null | undefined;
 export function normalizeToolInput(
   tool: string,
   input: Record<string, unknown> | null | undefined,
@@ -43,16 +36,12 @@ export function normalizeToolInput(
 }
 
 export function resolveAdvisorClient(
-  ctx?: PluginContext,
   opts?: Record<string, unknown>,
 ): AdvisorSdkClient | undefined {
   if (opts?.advisorClient) {
     return opts.advisorClient as AdvisorSdkClient;
   }
-  // Check if OpenCode v2 client is exposed directly on ctx (O-1)
-  if ((ctx as any)?.client) {
-    return (ctx as any).client as AdvisorSdkClient;
-  }
+  // v2.1.4 PluginContext has no client (O-1, verified live); tests inject via opts
   return undefined;
 }
 
@@ -93,7 +82,7 @@ export const GuardianAngelServerV2 = Plugin.define({
       guardFn: opts.guardFn as ServerHandlerDeps["guardFn"],
       loadPolicy: opts.loadPolicy as ServerHandlerDeps["loadPolicy"],
       now: opts.now as ServerHandlerDeps["now"],
-      advisorClient: resolveAdvisorClient(ctx, opts),
+      advisorClient: resolveAdvisorClient(opts),
       advisorModel: (opts.advisorModel as string | undefined) ?? resolveAdvisorModel(workspace),
     });
 

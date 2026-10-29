@@ -13,6 +13,7 @@ import type { IpcRequest } from "../opencode/types.ts";
 import { describeGuardRequest, guardChoices, renderGuardBody } from "../opencode/permission-view.ts";
 import { notifyDesktop } from "../opencode/notification.ts";
 import { QuestionDialog, type PromptSlotItem } from "../opencode/question-dialog.tsx";
+import { shouldHandleRequest } from "../opencode/session-routing.ts";
 
 export type TuiContext = Parameters<Parameters<typeof Plugin.define>[0]["setup"]>[0];
 
@@ -39,22 +40,12 @@ export function shouldHandleRequestV2(
   activeSessionId: string | undefined,
   context?: TuiContext,
 ): boolean {
-  if (!activeSessionId) return true;
-  if (req.sessionID === activeSessionId) return true;
-
-  if (context?.data?.session?.get) {
-    let currentId: string | undefined = req.sessionID;
-    const visited = new Set<string>();
-    while (currentId && !visited.has(currentId)) {
-      visited.add(currentId);
-      const session = context.data.session.get(currentId) as { parentID?: string } | undefined;
-      if (!session) break;
-      if (session.parentID === activeSessionId) return true;
-      currentId = session.parentID;
-    }
-  }
-
-  return false;
+  return shouldHandleRequest(
+    req,
+    activeSessionId,
+    undefined,
+    context?.data?.session?.get,
+  );
 }
 
 export function createApiShim(context: TuiContext) {
@@ -254,26 +245,14 @@ export const GuardianAngelTuiV2 = Plugin.define({
           } catch {}
 
           context.ui.dialog.show(
-            () => {
-              if (context.renderer) {
-                return (
-                  <QuestionDialog
-                    api={apiShim as any}
-                    view={view}
-                    choices={choices}
-                    onSettle={settle}
-                  />
-                );
-              }
-              return (
-                <QuestionDialog
-                  api={apiShim as any}
-                  view={view}
-                  choices={choices}
-                  onSettle={settle}
-                />
-              );
-            },
+            () => (
+              <QuestionDialog
+                api={apiShim as any}
+                view={view}
+                choices={choices}
+                onSettle={settle}
+              />
+            ),
             () => settle("deny"),
           );
         } else if (typeof (context.ui?.dialog as any)?.confirm === "function") {

@@ -23,22 +23,27 @@ export function getActiveSessionId(api: Partial<TuiPluginApi>): string | undefin
  * 2. `req.sessionID === activeSessionId` (direct call by main agent).
  * 3. `req.sessionID` is a child, grandchild, or subagent session whose ancestor
  *    chain traces back to `activeSessionId` (subagents launched via task tool).
+ *
+ * `sessionGet` overrides the session lookup used for the ancestor walk
+ * (v2 adapters pass `context.data.session.get`; v1 uses `api.state.session`).
  */
 export function shouldHandleRequest(
   req: { sessionID: string },
   activeSessionId: string | undefined,
   api?: Partial<TuiPluginApi>,
+  sessionGet?: (id: string) => { parentID?: string } | undefined,
 ): boolean {
   if (!activeSessionId) return true;
   if (req.sessionID === activeSessionId) return true;
 
+  const lookup = sessionGet ?? api?.state?.session?.get;
   // Bubble up child / subagent sessions to active parent session
-  if (api?.state?.session?.get) {
+  if (lookup) {
     let currentId: string | undefined = req.sessionID;
     const visited = new Set<string>();
     while (currentId && !visited.has(currentId)) {
       visited.add(currentId);
-      const session = api.state.session.get(currentId) as { parentID?: string } | undefined;
+      const session = lookup(currentId);
       if (!session) break;
       if (session.parentID === activeSessionId) return true;
       currentId = session.parentID;
