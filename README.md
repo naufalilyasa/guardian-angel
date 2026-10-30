@@ -2,7 +2,7 @@
 
 Guardian Angel adalah sistem pengawas (guard) deterministik sebelum tool call dieksekusi oleh coding agent, dilengkapi **mekanisme undo berbasis trash** sebagai jaring pengaman utama. 
 
-Mendukung **OpenCode 1.19.3** dan **Senpi / OMO Native**.
+Mendukung **OpenCode v2.1.4** (utama) dan **OpenCode 1.19.3** (mode maintenance), serta **Senpi / OMO Native**.
 
 > **Bukan sandbox OS, bukan security boundary.** Dirancang untuk mencegah kesalahan fatal agen (prompt injection oportunistik, halusinasi refactoring, penghapusan data, dan overwrite). Keputusan bersifat fail-closed untuk pola destruktif dan dilengkapi audit log terstruktur.
 
@@ -142,6 +142,26 @@ Daftarkan TUI plugin di `tui.json`:
 ```
 
 Specifier `guardian-angel-poc/opencode-server` dan `guardian-angel-poc/opencode-tui` juga tersedia dalam bentuk singkat: `guardian-angel-poc`, `guardian-angel-poc/server`, dan `guardian-angel-poc/tui` (semuanya menunjuk ke modul yang sama).
+
+### Pemasangan di OpenCode v2 (2.1.4)
+
+Di v2, daemon dan TUI adalah proses terpisah dan **plugin TUI harus berupa package direktori** (file tunggal atau entry `cli.json` hanya dimuat daemon, diabaikan TUI client). Layout:
+
+```
+~/.config/opencode/plugins/guardian-angel/
+├── package.json   ← { "type": "module", "exports": { ".": "./index.ts", "./tui": "./tui.tsx" } }
+├── index.ts       ← export { default, GuardianAngelServerV2 } from "<repo>/src/adapters/opencode-v2/server.ts";
+└── tui.tsx        ← export { default, GuardianAngelTuiV2 } from "<repo>/src/adapters/opencode-v2/tui.tsx";
+```
+
+- Import wajib **path absolut** (cwd daemon tidak menentu).
+- `index.ts` dimuat daemon (`ctx.tool.hook("execute.before")`, mutasi in-place `event.input.command`); `tui.tsx` dimuat TUI client (slot `session.composer.top`, keymap layer, heartbeat 2 detik).
+- Setelah mengubah layout plugin: jalankan `opencode service restart` sekali (daemon watch file, tapi load plugin saat startup).
+- Nama tool shell v2 adalah `"shell"` (v1 `"bash"`) — adapter v2 memetakan ini di seam agar rule v1 tetap kompatibel.
+
+#### Konfigurasi Advisor di v2
+
+Advisor di v2 memakai `ctx.generate.text` (stateless, tanpa session API). Model diambil dari `llm_advisor.model` (precedence sama dengan v1). Saat dialog muncul, advisor menulis `advisor-<callID>.json` ke IPC dir dan kartu verdict terisi saat model selesai.
 
 ---
 
