@@ -1,6 +1,7 @@
 import { Plugin } from "@opencode/plugin";
 import { resolve } from "node:path";
 import { createHookHandler, type ServerHandlerDeps } from "../opencode/server.ts";
+import { getWorkspaceIpcDir } from "../opencode/ipc.ts";
 import { resolveAdvisorModel, type AdvisorSdkClient } from "../opencode/advisor-client.ts";
 
 export type PluginContext = Parameters<Parameters<typeof Plugin.define>[0]["setup"]>[0];
@@ -95,6 +96,13 @@ export const GuardianAngelServerV2 = Plugin.define({
       (opts.workspace as string) ??
       (ctx.location as any)?.directory ??
       process.cwd();
+    // R3: log the IPC dir at startup so daemon vs TUI workspace-hash
+    // mismatches are diagnosable from the daemon log.
+    try {
+      console.log(
+        `[guardian-angel] daemon setup workspace=${workspace} ipcDir=${getWorkspaceIpcDir(workspace)}`,
+      );
+    } catch {}
 
     const hook = createServerV2Hook({
       workspace,

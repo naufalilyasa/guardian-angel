@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -323,6 +323,32 @@ describe("TUI Session Isolation & Routing (TDD)", () => {
       rmSync(ws2, { recursive: true, force: true });
       try {
         rmSync(ipcDir1, { recursive: true, force: true });
+      } catch {}
+    });
+
+    test("Multi-TUI (R6): a client disposing never un-lives another client on the same workspace", () => {
+      const ws = mkdtempSync(join(tmpdir(), "ga-proj-multi-"));
+      const ipcDir = getWorkspaceIpcDir(ws);
+      ensureIpcDir(ipcDir);
+
+      // Two TUI processes: write each heartbeat under its own PID file
+      writeFileSync(
+        join(ipcDir, "tui-heartbeat-111.json"),
+        JSON.stringify({ pid: 111, updatedAt: Date.now() }),
+      );
+      writeFileSync(
+        join(ipcDir, "tui-heartbeat-222.json"),
+        JSON.stringify({ pid: 222, updatedAt: Date.now() }),
+      );
+      expect(isTuiActive(ipcDir)).toBe(true);
+
+      // PID 111 disposes: only its own file is removed; 222 keeps the daemon alive
+      unlinkSync(join(ipcDir, "tui-heartbeat-111.json"));
+      expect(isTuiActive(ipcDir)).toBe(true);
+
+      rmSync(ws, { recursive: true, force: true });
+      try {
+        rmSync(ipcDir, { recursive: true, force: true });
       } catch {}
     });
   });

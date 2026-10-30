@@ -61,6 +61,13 @@ export function ensureIpcDir(ipcDir = getDefaultIpcDir()): string {
 }
 
 const HEARTBEAT_FILE = "tui-heartbeat.json";
+const HEARTBEAT_PREFIX = "tui-heartbeat-";
+
+function heartbeatPath(ipcDir: string): string {
+  // Per-PID so a second TUI client on the same workspace cannot be
+  // unlived when another disposes (R6); the legacy single file still counts.
+  return join(ipcDir, `${HEARTBEAT_PREFIX}${process.pid}.json`);
+}
 
 export function writeHeartbeat(ipcDir = getDefaultIpcDir()): void {
   ensureIpcDir(ipcDir);
@@ -68,13 +75,15 @@ export function writeHeartbeat(ipcDir = getDefaultIpcDir()): void {
     pid: process.pid,
     updatedAt: Date.now(),
   };
-  const target = join(ipcDir, HEARTBEAT_FILE);
+  const target = heartbeatPath(ipcDir);
   writeFileSync(target, JSON.stringify(data), { encoding: "utf-8", mode: 0o600 });
 }
 
 export function removeHeartbeat(ipcDir = getDefaultIpcDir()): void {
+  // Only this process's own file: another TUI attached to the same
+  // workspace must stay visible to the daemon.
   try {
-    const target = join(ipcDir, HEARTBEAT_FILE);
+    const target = heartbeatPath(ipcDir);
     if (existsSync(target)) {
       unlinkSync(target);
     }
@@ -85,11 +94,19 @@ export function removeHeartbeat(ipcDir = getDefaultIpcDir()): void {
 
 export function isTuiActive(ipcDir = getDefaultIpcDir(), maxAgeMs = 5000): boolean {
   try {
-    const target = join(ipcDir, HEARTBEAT_FILE);
-    if (!existsSync(target)) return false;
-    const content = readFileSync(target, "utf-8");
-    const data = JSON.parse(content) as IpcHeartbeat;
-    return typeof data.updatedAt === "number" && Date.now() - data.updatedAt < maxAgeMs;
+    if (!existsSync(ipcDir)) return false;
+    const now = Date.now();
+    // Any fresh heartbeat (per-PID or legacy single file) means a TUI is alive.
+    for (const f of readdirSync(ipcDir)) {
+      if (!f.startsWith(HEARTBEAT_PREFIX) && f !== HEARTBEAT_FILE) continue;
+      try {
+        const data = JSON.parse(readFileSync(join(ipcDir, f), "utf-8")) as IpcHeartbeat;
+        if (typeof data.updatedAt === "number" && now - data.updatedAt < maxAgeMs) return true;
+      } catch {
+        // unreadable file — try the next one
+      }
+    }
+    return false;
   } catch {
     return false;
   }
@@ -207,7 +224,10 @@ export function cleanupStale(ipcDir = getDefaultIpcDir(), maxAgeMs = 120_000): v
 
     for (const f of files) {
       if (
-        (f.startsWith("request-") || f.startsWith("response-") || f.startsWith("advisor-")) &&
+        (f.startsWith("request-") ||
+          f.startsWith("response-") ||
+          f.startsWith("advisor-") ||
+          f.startsWith(HEARTBEAT_PREFIX)) &&
         f.endsWith(".json")
       ) {
         try {

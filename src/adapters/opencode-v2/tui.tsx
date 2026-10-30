@@ -118,6 +118,11 @@ export const GuardianAngelTuiV2 = Plugin.define({
       process.cwd();
     const ipcDir = (opts.ipcDir as string) ?? getWorkspaceIpcDir(workspace);
 
+    // R3: mirror the daemon-side startup log so hash mismatches are visible
+    try {
+      console.log(`[guardian-angel] tui setup workspace=${workspace} ipcDir=${ipcDir}`);
+    } catch {}
+
     // 1. Initial heartbeat and renewal loop
     try {
       writeHeartbeat(ipcDir);
