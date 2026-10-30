@@ -190,7 +190,7 @@ Alasan (dibuktikan dari SDK, bukan asumsi):
 Risiko spesifik v2 yang harus ditangani di ipc.ts:
 
 - **R3 — workspace mismatch**: daemon dan TUI bisa melihat path berbeda (symlink/worktree). `resolve()` di hash sudah dilakukan kedua sisi; mitigasi tambahan: log `ipcDir` di startup daemon & TUI + smoke test dua-proses yang menegaskan keduanya sama.
-- **R6 — multi-TUI attach**: snapshot tui-v2 punya `plugins.activate/deactivate`; beberapa terminal bisa ke daemon yang sama. Heartbeat saat ini satu file → saling menimpa. **Tunda**: baru ubah ke `tui-heartbeat-<pid>.json` (`isTuiActive` = salah satu segar) kalau multi-attach terkonfirmasi di uji asli. Perubahan ini menyentuh `ipc.ts` + `test/opencode-ipc.test.ts` + `tui-session-leak.test.ts` → harus dalam satu commit dengan full suite hijau.
+- **R6 — multi-TUI attach**: snapshot tui-v2 punya `plugins.activate/deactivate`; beberapa terminal bisa ke daemon yang sama. Heartbeat lama satu file → saling menimpa; **sudah diimplementasikan**: `tui-heartbeat-<pid>.json` (removeHeartbeat hanya hapus file sendiri, `isTuiActive` menerima salah satu segar, legacy single file tetap dihitung, `cleanupStale` reap). Tidak lagi ditunda.
 
 ---
 
