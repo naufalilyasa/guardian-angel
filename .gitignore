@@ -3,3 +3,4 @@ node_modules/
 .omo/evidence/
 .DS_Store
 .fp-*
+.antigravity/
