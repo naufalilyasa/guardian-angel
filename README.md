@@ -1,25 +1,25 @@
-# Guardian Angel — Guard Deterministik & Undo Berbasis Trash untuk Coding Agent
+# Guardian Angel: Guard Deterministik & Undo Berbasis Trash untuk Coding Agent
 
-Guardian Angel adalah sistem pengawas (guard) deterministik sebelum tool call dieksekusi oleh coding agent, dilengkapi **mekanisme undo berbasis trash** sebagai jaring pengaman utama. 
+Guardian Angel mencegat dan memeriksa tool call sebelum dijalankan oleh coding agent, lalu menyediakan mekanisme undo berbasis trash untuk pemulihan instan.
 
-Mendukung **OpenCode v2.1.4** (utama) dan **OpenCode 1.19.3** (mode maintenance), serta **Senpi / OMO Native**.
+Mendukung **OpenCode v2.1.4** (utama), **OpenCode 1.19.3** (mode maintenance), dan **Senpi / OMO Native**.
 
-> **Bukan sandbox OS, bukan security boundary.** Dirancang untuk mencegah kesalahan fatal agen (prompt injection oportunistik, halusinasi refactoring, penghapusan data, dan overwrite). Keputusan bersifat fail-closed untuk pola destruktif dan dilengkapi audit log terstruktur.
+> Guard ini bukan sandbox OS. Tujuannya mencegah kesalahan fatal agen seperti prompt injection oportunistik, halusinasi refactoring, penghapusan data, dan penimpaan berkas. Keputusan berjalan secara fail-closed untuk pola destruktif dan dicatat rapi ke audit log.
 
 ---
 
 ## Fitur Utama
 
-- 🔄 **Undo & Restorasi Byte-Identik**: Perintah `rm` target tunggal di-rewrite secara otomatis menjadi `ga trash <path>` (O(1) rename tanpa duplikasi data). Dapat dipulihkan sewaktu-waktu dengan `ga restore --last` (terverifikasi integritas hash SHA-256).
-- 🗄️ **Cakupan SQL Deterministik**: Menahan perintah SQL destruktif (`DROP`, `TRUNCATE`, `ALTER`) baik via CLI client (`psql`, `mysql`, `sqlite3`), flag multipayload (`-c`, `-e`), input redirection, maupun heredoc.
-- 🛡️ **Pencegahan Overwrite Berkas Eksisting**: Mendeteksi penimpaan file yang sudah ada di disk melalui redirection (`>`, `>>`, `>|`, `2>`), `cat /dev/null >`, `tee`, `cp`, `mv`, `install`, `sed -i`, `truncate`, dan `dd of=`.
-- 🔒 **Proteksi Imutabilitas Store**: Direktori internal `.guardian-angel/` (audit, approvals, trash) dan repositori `.git/` kebal terhadap manipulasi, penulisan, penghapusan, atau penimpaan langsung maupun lewat symlink dan compound `cd`.
-- ⏱️ **Persetujuan Granular 24 Jam**: Approval di-scope ketat per `workspace \0 session \0 path \0 ruleId`. Menyetujui `git push` tidak akan pernah membuka izin untuk `sudo`, `chmod -R`, atau `docker prune`.
-- 💬 **Dialog Konfirmasi Bergaya Native OpenCode**: Render inline langsung di atas prompt chip tanpa modal overlay, menggunakan OpenTUI Solid (`┃` border, tanpa input search box). Dilengkapi navigasi panah `↑`/`↓`/`j`/`k`, shortcut angka `1. Deny` / `2. Allow`, `Enter` untuk konfirmasi, dan `Esc` untuk tolak (fail-closed).
-- ⏸️ **Jeda Eksekusi Indefinite & Notifikasi Desktop**: Agen berhenti total saat menunggu persetujuan (tidak timeout prematur) disertai notifikasi desktop OS (macOS/Linux) dan chime audio TUI.
-- 🕵️ **Redaksi Rahasia & Pencatatan Rule ID**: Audit log (`audit.jsonl`) mencatat field `ruleId` eksplisit pada setiap keputusan dan menyamarkan token sensitif (Bearer, API keys, password database `-p`, kredensial URL, dan secret keys).
-- 🧩 **Anti-Evasion Parser**: Menangani wrapper shell bertingkat (`bash -c`, `eval`, `$(...)`, `<(...)`, `>(...)`, backticks, subshell majemuk), launcher flags (`env`, `nice`, `timeout`), bare shell variable indirection (`$CMD`, `${CMD}`), quote-splitting (`r'm'`, `d'd'`), ANSI-C quoting (`$'\x72\x6d'`, `$'\162\155'`, `$'\u0072'`), serta compound directory traversal (`cd`, `pushd`, `env -C`).
-- 🤖 **LLM Security Advisor (Advisory-Only)**: Saat perintah masuk ke tier `ask`, LLM advisor memberi *second opinion* berbasis konten — badge risiko (`🟢 Safe` / `🟡 Caution` / `🔴 Dangerous`), ringkasan dampak, dan status reversibilitas — yang ditampilkan non-blocking di dalam dialog konfirmasi. Advisor membaca isi file yang sedang ditulis (bukan hanya path), tidak pernah memiliki tools, dan **tidak pernah** mengeksekusi atau auto-approve apapun. Dilengkapi pertahanan anti prompt-injection 4-lapis.
+- 🔄 **Undo & Restorasi Byte-Identik**: Perintah `rm` target tunggal dialihkan otomatis menjadi `ga trash <path>` tanpa menyalin ulang data. Berkas dapat dipulihkan kapan saja lewat `ga restore --last` dengan verifikasi hash SHA-256.
+- 🗄️ **Cakupan SQL Deterministik**: Menahan perintah SQL destruktif (`DROP`, `TRUNCATE`, `ALTER`) dari berbagai client CLI database (`psql`, `mysql`, `sqlite3`), baik melalui argumen flag eksekusi langsung `-c` dan `-e`, pengalihan file input, maupun blok heredoc multi-baris.
+- 🛡️ **Pencegahan Overwrite Berkas Eksisting**: Mendeteksi penimpaan file di disk melalui redirection (`>`, `>>`, `>|`, `2>`), `cat /dev/null >`, `tee`, `cp`, `mv`, `install`, `sed -i`, `truncate`, atau `dd of=`.
+- 🔒 **Proteksi Imutabilitas Store**: Mengunci direktori internal `.guardian-angel/` (penyimpan audit, approvals, dan payload trash) serta repositori `.git/` agar kebal terhadap manipulasi langsung, penulisan berkas lewat symlink, maupun upaya traversal direktori majemuk.
+- ⏱️ **Persetujuan Granular 24 Jam**: Approval diikat pada kombinasi `workspace \0 session \0 path \0 ruleId`. Persetujuan `git push` tidak akan membuka izin untuk `sudo`, `chmod -R`, atau `docker prune`.
+- 💬 **Dialog Konfirmasi Bergaya Native OpenCode**: Render inline langsung di atas prompt chip tanpa modal overlay, menggunakan OpenTUI Solid (`┃` border, tanpa input search box). Dilengkapi navigasi keyboard `↑`/`↓`/`j`/`k`, shortcut angka `1. Deny` / `2. Allow`, `Enter` untuk konfirmasi, dan `Esc` untuk tolak fail-closed.
+- ⏸️ **Jeda Eksekusi Indefinite & Notifikasi Desktop**: Agen berhenti menunggu persetujuan tanpa batas waktu prematur, disertai notifikasi desktop OS (macOS/Linux) dan chime audio TUI.
+- 🕵️ **Redaksi Rahasia & Pencatatan Rule ID**: Audit log (`audit.jsonl`) mencatat `ruleId` pada setiap keputusan serta menyamarkan token sensitif seperti bearer token, API key, password database, kredensial URL, dan secret key.
+- 🧩 **Anti-Evasion Parser**: Menangani wrapper shell bertingkat (`bash -c`, `eval`, subshell majemuk), launcher flags (`env`, `nice`, `timeout`), variabel shell, pemisahan quote, ANSI-C quoting, hingga compound directory traversal.
+- 🤖 **LLM Security Advisor (Advisory-Only)**: Pada tier `ask`, advisor memberi analisis risiko berbasis isi berkas (badge risiko `🟢 Safe` / `🟡 Caution` / `🔴 Dangerous`, ringkasan dampak, status reversibilitas). Penilaian berjalan non-blocking di dialog, tidak memiliki akses tools, dan tidak pernah mengambil keputusan sendiri.
 
 ---
 
@@ -57,7 +57,7 @@ Mendukung **OpenCode v2.1.4** (utama) dan **OpenCode 1.19.3** (mode maintenance)
     • 24h Approval Memory
 ```
 
-> **Aturan Emas**: Modul `src/core/` adalah modul murni (pure deterministic) tanpa dependensi runtime harness.
+> Modul core murni deterministik. Modul ini tidak pernah mengimpor dependensi runtime dari harness mana pun.
 
 ---
 
@@ -76,9 +76,9 @@ Mendukung **OpenCode v2.1.4** (utama) dan **OpenCode 1.19.3** (mode maintenance)
 Guardian Angel menyediakan integrasi modular untuk OpenCode:
 
 1. **Server Plugin** (`src/adapters/opencode/server.ts`):
-   - Mencegat eksekusi melalui hook `tool.execute.before`.
+   - Mencegat eksekusi tool sebelum berjalan melalui hook imperatif `tool.execute.before`.
    - Memetakan tool OpenCode (`bash`, `write`, `edit`, `patch`).
-   - Mengalihkan perintah `rm` menjadi perintah `ga trash`.
+   - Mengalihkan perintah `rm` menjadi perintah `ga trash` secara atomik di dalam workspace.
    - Mengirim permintaan konfirmasi `ask` ke TUI bridge dengan timeout indefinite (agen berhenti total sampai diputuskan), atau fail-closed seketika di mode headless.
    - Dilengkapi cache penolakan 30 detik untuk mencegah popup berulang saat agen me-retry perintah.
 
@@ -106,12 +106,12 @@ Saat sebuah tool call masuk ke tier `ask`, Guardian Angel secara **non-blocking*
 **Membaca isi, bukan cuma path:** untuk tool `write`/`edit`/`patch`, advisor menerima **konten yang sedang ditulis** (bukan file yang sudah ada di disk), sehingga payload destruktif di dalam file terlihat oleh model dan oleh pengguna di dialog.
 
 **Pertahanan Anti Prompt-Injection 4 Lapis:**
-1. **Data-Instruction Boundary** — perintah/file tak terpercaja dibungkus dalam tag `<untrusted_command>` / `<untrusted_file>` yang dideklarasikan inert; percobaan menutup tag dari dalam di-escape (`&lt;/untrusted_command&gt;`).
-2. **Toolless Invocation** — LLM dipanggil dengan `tools: {}`; model tidak punya tools, filesystem, atau akses eksekusi apapun.
-3. **Host-Controlled Ingestion** — host (bukan LLM) yang membaca file, menolak binary (NUL byte), dan membatasi ukuran 64 KB dengan label truncation.
-4. **Strict Structured Output** —respons harus parse menjadi JSON valid (`risk_level`, `summary`, `is_reversible`, `affected_resources`); jika tidak, kartu menampilkan error, bukan verdict palsu.
+1. **Data-Instruction Boundary**: Perintah atau file tak tepercaya dibungkus dalam tag `<untrusted_command>` / `<untrusted_file>` yang dideklarasikan inert; percobaan menutup tag dari dalam di-escape (`&lt;/untrusted_command&gt;`).
+2. **Toolless Invocation**: LLM dipanggil dengan `tools: {}`; model tidak punya tools, filesystem, atau akses eksekusi apa pun.
+3. **Host-Controlled Ingestion**: Host membaca file langsung, menolak file biner (NUL byte), dan membatasi ukuran 64 KB dengan label pemotongan.
+4. **Strict Structured Output**: Respons wajib berformat JSON valid (`risk_level`, `summary`, `is_reversible`, `affected_resources`). Bila gagal di-parse, kartu menampilkan pesan galat, bukan vonis palsu.
 
-**Penting: advisor adalah penasihat, bukan pengambil keputusan.** Advisor **tidak pernah** auto-allow atau mengubah verdict. Otoritas 100% tetap pada pengguna yang menekan `1. Deny` / `2. Allow`. Verdict advisor dicatat ke `audit.jsonl` pada field `advisor` untuk forensik.
+Advisor berfungsi murni sebagai penasihat teknis tanpa hak eksekusi maupun auto-allow, sehingga keputusan akhir sepenuhnya berada di tangan pengguna melalui opsi `1. Deny` atau `2. Allow`. Seluruh penilaian advisor dicatat ke `audit.jsonl` untuk kebutuhan forensik.
 
 **Konfigurasi model** (opsional, di `.guardian-angel/config.json`):
 ```json
@@ -157,7 +157,7 @@ Di v2, daemon dan TUI adalah proses terpisah dan **plugin TUI harus berupa packa
 - Import wajib **path absolut** (cwd daemon tidak menentu).
 - `index.ts` dimuat daemon (`ctx.tool.hook("execute.before")`, mutasi in-place `event.input.command`); `tui.tsx` dimuat TUI client (slot `session.composer.top`, keymap layer, heartbeat 2 detik).
 - Setelah mengubah layout plugin: jalankan `opencode service restart` sekali (daemon watch file, tapi load plugin saat startup).
-- Nama tool shell v2 adalah `"shell"` (v1 `"bash"`) — adapter v2 memetakan ini di seam agar rule v1 tetap kompatibel.
+- Nama tool shell v2 adalah `"shell"` (v1 `"bash"`); adapter v2 memetakan ini di seam agar rule v1 tetap kompatibel.
 
 #### Konfigurasi Advisor di v2
 
@@ -256,21 +256,21 @@ Verifikasi lingkungan ext4 mount read-only terisolasi:
 ## Batasan POC (Known Residuals)
 
 Sesuai prinsip transparansi keamanan, batas kemampuan guard didokumentasikan secara terbuka di `test/fixtures/redteam.jsonl`:
-- **Kode Interpreter Inline Kini Gated**: Hasil pentest Atria-Dawn membuktikan `python3 -c "..."` (termasuk payload base64 `executescript`) sempat lolos dengan verdict `allow` tanpa konfirmasi — melalui itu agent bisa menghapus store, audit, dan database. Kini payload interpreter inline (`python3 -c`, `node -e`, `bun -e`, `perl -e`, `ruby -e`, `php -r`, `deno eval`, `awk`, dsb.) wajib `ask` (tidak dapat diperiksa secara deterministik), dan `block` bila payload menyentuh area terlindungi (`.guardian-angel`/`.git`) atau memuat pola destruktif root. Interpreter yang dispatch command via `system()` (mis. `awk 'system("rm x")'`) juga di-scan.
-- **Pipe ke Shell & Dynamic Substitution Kini Gated**: Perintah yang mem-pipe data ke shell interpreter (`echo <base64> | base64 -d | bash`, `cat script.sh | sh`, `find | xargs sh`) otomatis di-gate ke `ask:pipe-to-shell` / `ask:xargs-shell`. Substitusi dinamis dalam `eval "$(base64 -d ...)"` di-gate ke `ask:variable-command`. Command word ber-escape heksadesimal, oktal, maupun Unicode (`$'\x72\x6d'`, `$'\162\155'`, `$'\u0072'` — semua di-unescape dan diblokir sebagai `block:rm-root`.
-- **SSH Remoting Kini Di-unwrap & Diinspeksi**: Perintah remote lewat `ssh [flags] host "command"` (termasuk via `sshpass`) di-unwrap dan diinspeksi secara rekursif (termasuk ssh bertingkat dan `-o ProxyCommand`). Jika remote command destruktif (`rm -rf /`, `DROP TABLE`) maka langsung `block`; jika mutatif maka `ask`; jika memuat remote `rm` maka di-gate `ask:remote-rm` (karena tidak ada `ga trash` di remote host); dan ssh interaktif tanpa remote command tetap `allow`.
+- **Kode Interpreter Inline Kini Gated**: Hasil pentest Atria-Dawn membuktikan `python3 -c "..."` (termasuk payload base64 `executescript`) sempat lolos dengan verdict `allow` tanpa konfirmasi. Melalui celah itu agen bisa menghapus store, audit, dan database. Kini payload interpreter inline (`python3 -c`, `node -e`, `bun -e`, `perl -e`, `ruby -e`, `php -r`, `deno eval`, `awk`, dsb.) wajib `ask` (tidak dapat diperiksa secara deterministik), dan `block` bila payload menyentuh area terlindungi (`.guardian-angel`/`.git`) atau memuat pola destruktif root. Interpreter yang dispatch command via `system()` (misal `awk 'system("rm x")'`) juga di-scan.
+- **Pipe ke Shell & Dynamic Substitution Kini Gated**: Perintah yang mem-pipe data ke shell interpreter (`echo <base64> | base64 -d | bash`, `cat script.sh | sh`, `find | xargs sh`) otomatis di-gate ke `ask:pipe-to-shell` / `ask:xargs-shell`. Substitusi dinamis dalam `eval "$(base64 -d ...)"` di-gate ke `ask:variable-command`. Command word ber-escape heksadesimal, oktal, maupun Unicode (`$'\x72\x6d'`, `$'\162\155'`, `$'\u0072'`) di-unescape dan diblokir sebagai `block:rm-root`.
+- **SSH Remoting Kini Di-unwrap & Diinspeksi**: Perintah remote lewat `ssh [flags] host "command"` (termasuk via `sshpass`) di-unwrap dan diinspeksi secara rekursif hingga ke level subshell. Command destruktif seperti `rm -rf /` atau `DROP TABLE` langsung diblokir; instruksi mutatif meminta konfirmasi pengguna; pemanggilan `rm` remote dialihkan ke tier `ask:remote-rm` karena ketiadaan `ga trash` di host tujuan; sedangkan sesi SSH interaktif murni tanpa argumen perintah langsung diizinkan.
 - **Compound Command Multi-Segment Kini Diinspeksi**: classifier sebelumnya hanya memeriksa perintah pertama dari sebuah compound (`cd /tmp; sqlite3 db "DROP TABLE users;"` lolos). Kini setiap segmen dipisahkan secara benar (`;`, `&&`, `||`, `&`, `|`) dan masing-masing segmen diklasifikasi SQL ataupun script; verdict terberat menang. Pembuatan script dan eksekusinya dalam satu perintah (`printf '#!/bin/sh\n...' > x.sh; sh x.sh`) juga kini terdeteksi sebagai `block:script-destructive` / `ask:script-dynamically-generated`.
-- **File Skrip Interpreter Kini Diinspeksi (Script Content Gate)**: Eksekusi file skrip (`python3 script.py`, `node server.js`, `bash build.sh`, `./script.py`, `source script.sh`, `. script.sh`) diinspeksi kontennya jika file ada di disk. `source`/`.` (POSIX dot builtin) sempat menjadi lubang — eksekusi script destruktif via `source evil.sh` lolos sebagai `allow:default`; kini keduanya melewati script-gate yang sama. Jika skrip mencoba memodifikasi store (`.guardian-angel`) atau `.git` maka langsung `block`; jika memuat perintah destruktif (`rm -rf /`, `shutil.rmtree('/')`, `DROP TABLE`) maka `block`; jika memuat eksekusi dinamis/obfuscated (`eval`, `exec`, base64 decoding) di luar direktori vendor/build maka `ask`; skrip di luar workspace atau file binary tidak terbaca `ask`; dan skrip bersih tetap `allow`. Approval di-scope per-file path (bukan per-workspace). Residual: skrip yang belum ada di disk saat parse, skrip luar workspace, atau konstruksi string dinamis ekstrim (`chr(46)+'guardian-angel'`) tetap memerlukan isolasi OS — script gate melihat static patterns saja.
+- **File Skrip Interpreter Kini Diinspeksi (Script Content Gate)**: Eksekusi file skrip (`python3 script.py`, `node server.js`, `bash build.sh`, `./script.py`, `source script.sh`, `. script.sh`) diinspeksi kontennya jika file ada di disk. `source`/`.` (POSIX dot builtin) sempat menjadi lubang, di mana eksekusi script destruktif via `source evil.sh` lolos sebagai `allow:default`; kini keduanya melewati script-gate yang sama. Jika skrip mencoba memodifikasi store (`.guardian-angel`) atau `.git` maka langsung `block`; jika memuat perintah destruktif (`rm -rf /`, `shutil.rmtree('/')`, `DROP TABLE`) maka `block`; jika memuat eksekusi dinamis/obfuscated (`eval`, `exec`, base64 decoding) di luar direktori vendor/build maka `ask`; skrip di luar workspace atau file binary tidak terbaca `ask`; dan skrip bersih tetap `allow`. Approval di-scope per-file path (bukan per-workspace). Residual: skrip yang belum ada di disk saat parse, skrip luar workspace, atau konstruksi string dinamis ekstrim (`chr(46)+'guardian-angel'`) tetap memerlukan isolasi OS karena script gate melihat pola statis saja.
 - **Dukungan Cross-Volume Trash & Verifikasi Integritas SHA-256**: Mekanisme `ga trash` menggunakan `fs.renameSync` atomic O(1) sebagai fast-path; jika target berada di filesystem/mount device berbeda (`EXDEV`), guard secara otomatis fallback ke copy+verify+delete terverifikasi SHA-256 (file dan direktori). Metadata `meta.json` mencatat `sha256` dan `copied: true`. Saat `ga restore`, integritas payload diverifikasi ulang dengan hash sebelum dipulihkan, dan restore lintas-device juga mendukung fallback verifikasi hash yang sama. Jika verifikasi gagal di tahap mana pun, file asli tidak pernah dihapus.
 - **Isolasi Store & Tripwire Integritas SHA-256 (Tier 1)**: Berkas store `.guardian-angel/approvals.json` dan `.guardian-angel/audit.jsonl` dilindungi ganda: (1) izin berkas pada sistem operasi di-lock mode read-only (`0o400`) saat diam, sehingga direct write via redirection (`>`), python `open('w')`, atau `node` langsung menghasilkan `EACCES: permission denied`; hanya mutasi sah oleh Guardian Angel yang membuka kunci (`0o600`) sesaat secara atomik. (2) Tripwire in-memory menyimpan saksi hash SHA-256 atas setiap status sah. Jika ada proses luar yang mengubah izin dan memodifikasi isi `approvals.json` di luar guard, tripwire seketika mendeteksi ketidakcocokan hash, membatalkan/mereset seluruh approval palsu menjadi kosong, dan menahan perintah kembali ke konfirmasi pengguna. Isolasi kernel penuh (user dedicated) dibahas di PRD `os-isolation-store.prd.md`.
 
 ### Residual yang Tetap (Honest Disclosure)
 
 Guardian Angel adalah guard deterministik berbasis parsing, **bukan sandbox OS**. Vektor berikut tetap menjadi batas yang diakui secara terbuka dan terdokumentasi di corpus redteam:
-- **Script Dunia Runtime**: kode yang melakukan fetch/perubahan path secara dinamis (mis. `requests.get` + dynamic import, `chr(46)+'guardian-angel'`) lolos dari regex. Script gate melihat static patterns saja. Inilah alasan Batas 5 (store `0o400` + tripwire) eksis sebagai backstop.
+- **Script Dunia Runtime**: kode yang melakukan fetch/perubahan path secara dinamis (misal `requests.get` + dynamic import, `chr(46)+'guardian-angel'`) lolos dari regex. Script gate melihat static patterns saja. Inilah alasan Batas 5 (store `0o400` + tripwire) eksis sebagai backstop.
 - **Base64/encoding pipe ke shell dengan receiver non-shell** tetap membutuhkan perhatian (sudah gated untuk shell receiver).
 - **Skrip yang baru dibuat dan langsung dieksekusi dalam command yang sama** kini terdeteksi melalui path-match `fullCommand`, tetapi konstruksi yang sangat dinamis tetap lolos.
-- **Tool selain `bash`/`write`/`edit`/`patch`** (mis. `task`, MCP tools) bersifat passthrough — hanya keempat tool itu yang dimetakan ke `ToolCall` saat ini.
+- **Tool selain `bash`/`write`/`edit`/`patch`** (misal `task`, MCP tools) bersifat passthrough; hanya keempat tool itu yang dimetakan ke `ToolCall` saat ini.
 
 ---
 

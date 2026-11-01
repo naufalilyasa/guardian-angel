@@ -108,7 +108,7 @@ export default define({
 | — | `event.messageID` | hanya audit |
 | — | `event.input.workdir` | **baru**: direktori tool call; candidate workspace per-call (sekarang workspace = `ctx.location.directory` = direktori boot daemon) |
 
-`toToolCall(event.tool, event.input)` dipakai apa adanya. Satu risiko nyata: **nama field input v2 bisa berbeda** (`filePath` vs `path`). Mitigasi: satu fungsi normalisasi `normalizeToolInput(tool, input)` di modul v2 yang mentoleransi ejaan keduanya + test tabel; tetap menggunakan pasangan `(tool, args)` sebagai satu-satunya seam.
+`toToolCall(event.tool, event.input)` digunakan langsung tanpa modifikasi. Satu risiko nyata: **nama field input v2 bisa berbeda** (`filePath` vs `path`). Mitigasi: satu fungsi normalisasi `normalizeToolInput(tool, input)` di modul v2 yang mentoleransi ejaan keduanya + test tabel; tetap menggunakan pasangan `(tool, args)` sebagai satu-satunya seam.
 
 ### 1.3 Async approval wait (daemon memblokir hook)
 
@@ -125,7 +125,7 @@ Semantik yang dipertahankan persis dari v1:
 `advisor-client.ts` **tidak diubah**: `AdvisorSdkClient` adalah tipe structural (session.create + session.prompt), test-injectable, tidak terikat SDK. Yang berubah hanya dari mana `client` didapat. Di `PluginContext` snapshot yang diperiksa **tidak ada `client`** → open item:
 
 - **O-1 (wajib di Fase 0)**: verifikasi apakah v2.1.4 `ctx` menyediakan client (mis. `ctx.client` / `ctx.integration.connection.active`). Fallback: `createOpencodeClient({ baseURL: daemonUrl })` dengan `daemonUrl` dari env/`ctx.options`. Advisor tetap **advisory-only, non-blocking** (status `loading→ready|error` lewat `advisor-<callID>.json`), tidak pernah gate — kegagalan advisor tidak boleh memblokir tool call.
-- `resolveAdvisorModel(workspace, model)` dipakai apa adanya.
+- `resolveAdvisorModel(workspace, model)` dipertahankan tanpa perubahan.
 
 ---
 
@@ -153,7 +153,7 @@ api.slots.register({
 });
 ```
 
-Fallback `api.ui.dialog.replace(... QuestionDialog ...)` tetap (host tanpa renderer slot); cabang `DialogSelect`/`DialogConfirm` tetap (10 baris, untuk lingkungan tanpa renderer). Tidak ada penulisan ulang komponen: `question-dialog.tsx`, `permission-view.ts`, `notification.ts` dipakai apa adanya.
+Fallback `api.ui.dialog.replace(... QuestionDialog ...)` tetap (host tanpa renderer slot); cabang `DialogSelect`/`DialogConfirm` tetap (10 baris, untuk lingkungan tanpa renderer). Tidak ada penulisan ulang komponen: `question-dialog.tsx`, `permission-view.ts`, dan `notification.ts` digunakan kembali secara utuh.
 
 ### 2.2 Keymap layer priority
 
