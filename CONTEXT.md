@@ -1,6 +1,6 @@
 # guardian-angel
 
-Guard + undo untuk agent AI: keputusan deterministik sebelum tool call dieksekusi, dengan undo sebagai jaring pengaman utama. Fase 1 menargetkan Senpi/OMO Native.
+Guard + undo untuk agent AI: keputusan deterministik sebelum tool call dieksekusi, dengan undo sebagai jaring pengaman utama. Mendukung OpenCode v2.1.4 (target utama), OpenCode 1.19.3 (mode maintenance), dan Senpi/OMO Native.
 
 ## Language
 
@@ -13,7 +13,7 @@ Lapisan tipis per-harness yang menerjemahkan hook pre-tool-call harness ke peman
 _Avoid_: plugin, extension
 
 **Harness**:
-Runtime agent yang menjalankan tool call. Fase 1 hanya Senpi/OMO Native.
+Runtime agent yang menjalankan tool call (OpenCode v2.1.4, OpenCode v1.19.3, Senpi/OMO Native).
 _Avoid_: host, client
 
 **Verdict**:

@@ -88,11 +88,11 @@ Guardian Angel menyediakan integrasi modular untuk OpenCode:
    - Tanpa input search box ("Type your own answer").
    - Navigasi keyboard terintegrasi mode `"question"` dan keymap layer OpenCode (`↑`/`↓`/`k`/`j` untuk memilih opsi, shortcut `1` / `2`, `Enter` untuk konfirmasi, dan `Esc` untuk tolak fail-closed).
    - Memancarkan notifikasi desktop (macOS Ping notification / Linux `notify-send`) dan chime audio TUI `question`.
-   - Mengirim sinyal heartbeat aktif setiap 2 detik dan terisolasi per-workspace/sesi.
+   - Mengirim sinyal heartbeat aktif setiap 2 detik terisolasi per-PID (`tui-heartbeat-<pid>.json`) per-workspace/sesi (aman untuk multi-TUI attach).
 
 3. **File-IPC Bridge** (`src/adapters/opencode/ipc.ts`):
    - Komunikasi antar-proses aman di `/tmp/guardian-angel-ipc-<user>/<workspace-hash>` (mode `0o700`).
-   - Dilengkapi cryptographic nonce acak dan izin berkas ketat (`0o600`).
+   - Dilengkapi cryptographic nonce acak dan izin berkas ketat (`0o600`), verifikasi kepemilikan UID, penolakan symlink, serta pembersihan file stale.
 
 ### LLM Security Advisor (`src/core/advisor.ts` & `src/adapters/opencode/advisor-client.ts`)
 
@@ -222,7 +222,7 @@ Setiap workspace yang dilindungi memiliki direktori lokal:
 ```bash
 bun test
 ```
-*653 test passing / 0 fail / 1486 expect calls / 24 test files.*
+*683 test passing / 0 fail / 1548 expect calls / 26 test files.*
 
 ### 2. Destructive 20-Case Smoke Suite
 Menguji 20 skenario destruktif nyata (quoted path `rm`, overwrite `>`, SQL multi-payload DROP, wrappers, path traversal, git clean):

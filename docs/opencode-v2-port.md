@@ -1,6 +1,6 @@
 # Desain Porting Adapter OpenCode v2 (v2.1.4)
 
-Status: Fase 0–2 tervalidasi live termasuk gate TUI interaktif (2026-10-28..29, OpenCode v2.1.4). Menyupersede ADR-0012 untuk target adapter OpenCode (ADR-0013 difilekan di Fase 4).
+Status: Fase 0–4 SELESAI dan tervalidasi live end-to-end (2026-10-28..30, OpenCode v2.1.4). Menyupersede ADR-0012 untuk target adapter OpenCode (ADR-0013 accepted). Total test: 683/683 pass across 26 files.
 
 ### Fakta verifikasi live (2026-10-28, `opencode run --standalone`)
 
@@ -23,9 +23,14 @@ Status: Fase 0–2 tervalidasi live termasuk gate TUI interaktif (2026-10-28..29
 - **Approval ber-scoped workspace untuk write-outside**: satu allow di sesi ini membuat semua tulisan keluar workspace di sesi yang sama auto-approve 24 jam — catatan UX (default scope tombol allow). Konsisten dengan perilaku v1.
 - Residual: daemon memberi WARN satu kali (ENOENT) untuk path file lama saat transisi; entry plugin manager bisa menampilkan kegagalan basi sampai restart berikutnya.
 
-## Temuan eksplorasi (fakta repo, 2026-10-28)
+### Fakta verifikasi Advisor & Multi-TUI (2026-10-30)
 
-- `bun test`: **653 tests / 24 files hijau (3.40s)**. Test mengimpor dari `src/adapters/opencode/{server,tui,ipc,advisor-client,question-dialog,permission-view,notification}.ts(x)` — semua file v1 wajib tetap kompatibel.
+- **Advisor client di v2**: daemon context v2 tidak memiliki session client (`ctx.client` absen) → advisor di-wire menggunakan stateless `ctx.generate.text` shim (`src/adapters/opencode-v2/server.ts`). Model default `9router/ag/gemini-3.8-flash-low` (terverifikasi live menghasilkan verdict `medium` pada probe `sudo -n true` dan tercatat di `audit.jsonl`).
+- **Heartbeat per-PID (R6)**: `tui-heartbeat-<pid>.json` mencegah race condition saat multi-TUI clients terhubung ke daemon yang sama. `isTuiActive` menerima heartbeat segar dari PID mana pun, `removeHeartbeat` hanya membersihkan PID sendiri saat dispose.
+
+## Temuan eksplorasi (fakta repo, 2026-10-28..30)
+
+- `bun test`: **683 tests / 26 files hijau (4.49s)**. Test mengimpor dari `src/adapters/opencode/{server,tui,ipc,advisor-client,question-dialog,permission-view,notification}.ts(x)` dan `src/adapters/opencode-v2/{server,tui}.ts(x)` — semua file v1 dan v2 100% lulus.
 - `@opencode-ai/plugin@1.18.2` (terpasang) **sudah mengekspor `./v2/promise` dan `./v2/effect`**, tapi `PluginContext`-nya hanya puny `options, agent, aisdk, catalog, command, integration, plugin, reference, skill` — **tidak ada `ctx.tool`**. Permukaan `ctx.tool.hook("execute.before")` ada di rilis yang lebih baru; **upgrade SDK adalah prasyarat, bukan no-op**.
 - Snapshot dist-tag `tui-v2` (0.0.0-tui-v2-20260626): `TuiEventBus` hanya `on` (subscribe `Event` SDK), **tidak ada `emit`/channel custom**; `TuiPluginApi` sudah punya `keymap.registerLayer`, `mode.push`, `slots.register`, `plugins.activate`, `kv`, `lifecycle`. Slot `session_prompt` masih ada di snapshot itu — penghapusan +nama `session.composer.top`/`prompt.footer` ada di v2.1.4 sesuai spesifikasi.
 - `executeHookLogic` / `createHookHandler` di `server.ts` **sudah harness-agnostic**: signaturenya `{tool, sessionID, callID}` + `{args}`. Map ke event v2 hanya pembungkus tipis (lihat §1.2).
@@ -229,45 +234,47 @@ Risiko spesifik v2 yang harus ditangani di ipc.ts:
 
 ---
 
-## 5. Rencana migrasi bertahap (5 fase)
+## 5. Rencana migrasi bertahap (5 fase) — SEMUA SELESAI
 
-Prinsip: **Fase 1–2 murni aditif** — tidak ada satu barispun di `src/adapters/opencode/*` atau `src/core/*` yang diubah → 653 test dijamin tidak tersentuh. Setiap fase punya gerbang: `bun test` (semua) + `bun run typecheck` hijau, dan pengujian asli di OpenCode v2.1.4 untuk fase berlabel integrasi.
+Prinsip: **Fase 1–2 murni aditif** — tidak ada satu barispun di `src/adapters/opencode/*` atau `src/core/*` yang diubah → 653 test dijamin tidak tersentuh. Setelah Fase 3–4 selesai, total pengujian mencapai **683 tests across 26 files (0 fail)**.
 
-### Fase 0 — Verifikasi & pin SDK (gerbang atau mati)
-- Bump `@opencode-ai/plugin` ke rilis v2.1.4-compatible; **sebelum commit**: scratch typecheck bahwa kode v1 masih kompabil terhadap paket baru (risiko R1). Jika v1 pecah: hentikan, cari rilis yang mendukung keduanya.
-- Konfirmasi: bentuk `ctx.tool.hook("execute.before", …)`, bentuk `event`, lokasi client untuk advisor (O-1), skema `cli.json` `plugins`, nama slot final.
-- Output: catatan fakta di ADR-0013. **Gerbang**: 653 hijau + typecheck.
+### Fase 0 — Verifikasi & pin SDK [SELESAI]
+- Pin `@opencode/plugin@2.2.0` (devDependency) berdampingan dengan `@opencode-ai/plugin@1.18.2`. Typecheck bersih tanpa collision.
+- Konfirmasi: bentuk `ctx.tool.hook("execute.before", …)`, bentuk event `{tool, input, sessionID, agent, messageID, id}`, dan slot `session.composer.top`.
 
-### Fase 1 — Server adapter v2 (hanya file baru)
-- `src/adapters/opencode-v2/server.ts` (§1.2) + `normalizeToolInput` jika nama field v2 berbeda.
-- `test/opencode-v2-server.test.ts`: mirror `opencode-adapter.test.ts` dengan bentuk event v2 (mapping, rewrite `rm→trash` memutar `event.input.command` in-place, block lewat throw, headless fail-closed, denial cache, advisor status file).
-- **Gerbang**: 653 lama + baru hijau; nol edit file v1/core.
+### Fase 1 — Server adapter v2 [SELESAI]
+- `src/adapters/opencode-v2/server.ts` mengintercept `execute.before`, rewrite `rm -> ga trash` in-place pada `event.input.command`, block via `throw Error`.
+- Pemetaan tool: v2 `"shell"` dipetakan ke `"bash"` di seam agar kompatibel dengan rule v1.
+- `normalizeToolInput` memastikan kompatibilitas `path` dan `filePath`.
+- 19 test di `test/opencode-v2-server.test.ts` lulus.
 
-### Fase 2 — TUI adapter v2 (hanya file baru)
-- `src/adapters/opencode-v2/tui.ts` (§2.1–2.3); komponen dialog dipakai ulang.
-- `test/opencode-v2-tui.test.tsx` dengan pola yang sudah ada: `createTestRenderer` + `render` (`@opentui/solid`), mock api dengan `slots.register("session.composer.top")`, `keymap.registerLayer`, `mode.push`, `lifecycle.onDispose`; tulis `request-<callID>.json`, asersi dialog muncul di slot, `writeResponse` → settle, `cleanupCall` terjadi, dispose membersihkan timer/heartbeat.
-- **Gerbang**: full suite hijau; integrasi dua-proses asli (daemon + TUI client, satu workspace) — terima/tolak approval end-to-end, `ipcDir` konsisten (R3).
+### Fase 2 — TUI adapter v2 [SELESAI]
+- `src/adapters/opencode-v2/tui.tsx` me-mount dialog di slot `session.composer.top`.
+- Layout package direktori `~/.config/opencode/plugins/guardian-angel/{package.json,index.ts,tui.tsx}` terverifikasi dimuat TUI client.
+- 7 test di `test/opencode-v2-tui.test.tsx` lulus. Gate interaktif live terverifikasi end-to-end (dialog → approval 24j → audit).
 
-### Fase 3 — Hardening IPC (menyentuh file bersama, satu commit)
-- Hanya jika Fase 2 membuktikan kebutuhan: heartbeat per-PID untuk multi-TUI (R6) + update `test/opencode-ipc.test.ts`, `test/tui-session-leak.test.ts` di commit yang sama.
-- Tambah log `ipcDir` startup daemon & TUI.
-- **Gerbang**: full suite hijau; smoke `scripts/test-opencode-smoke.ts` diperluas untuk v2.
+### Fase 3 — Hardening IPC & Advisor v2 [SELESAI]
+- Heartbeat per-PID (`tui-heartbeat-<pid>.json`) di `src/adapters/opencode/ipc.ts` (R6) agar multi-TUI tidak saling menimpa liveness.
+- Startup log `ipcDir` di daemon & TUI setup.
+- LLM Security Advisor dihubungkan via stateless `ctx.generate.text` shim di `src/adapters/opencode-v2/server.ts`. Model: `9router/ag/gemini-3.8-flash-low`.
+- Test multi-TUI ditambahkan ke `test/tui-session-leak.test.ts`.
 
-### Fase 4 — Packaging, ADR, migrasi pengguna
-- Tambah exports `./opencode-v2/*` (§4); update README (instalasi `cli.json`, kopet pelaporan); filekan `docs/adr/0013-opencode-v2-primary.md` (ADR-0012 → superseded: v2 jadi target utama, v1 mode maintenance); flip `.` ke v2 bila diinginkan dengan catatan rilis. Rencana EOL v1 (mis. 3 bulan) tergantung adopsi.
-- **Gerbang**: full suite hijau + instalasi bersih di mesin lain.
+### Fase 4 — Packaging, ADR, dokumentasi [SELESAI]
+- Exports `./opencode-v2/server` dan `./opencode-v2/tui` di `package.json`.
+- `docs/adr/0013-opencode-v2-primary.md` difilekan dan accepted.
+- README.md diperbarui dengan panduan instalasi OpenCode v2 dan konfigurasi Advisor.
 
 ### Register risiko
 
-| # | Risiko | Mitigasi | Fase |
+| # | Risiko | Status | Hasil |
 |---|---|---|---|
-| R1 | Permukaan SDK v2 berubah / berbeda dari asumsi | Fase 0 verifikasi + pin eksak + typecheck v1 ulang; desain wrapper ~40 baris mudah disesuaikan | 0 |
-| R2 | Nama field `event.input` berbeda dari v1 | `normalizeToolInput` + test tabel + corpus redteam jalan di v2 | 1 |
-| R3 | Workspace daemon ≠ TUI → hash IPC berbeda → approval tidak pernah muncul | `resolve()` kedua sisi, log `ipcDir`, smoke dua-proses | 0,2 |
-| R4 | 653 test regresi oleh edit shared | Fase 1–2 murni aditif; gerbang `bun test` setiap commit | 1–2 |
-| R5 | Daemon hidup tanpa TUI + ask → tool hang | Sudah ditangani (heartbeat check → fail-closed); diverifikasi di v2 | 2 |
-| R6 | Multi-TUI saling timpa heartbeat | Heartbeat per-PID, hanya jika terkonfirmasi; satu commit dengan test | 3 |
-| R7 | Migrasi config `tui.json`→`cli.json` patah instalasi ada | v1 tetap berfungsi sepanjang; README migrasi + ADR | 4 |
+| R1 | Permukaan SDK v2 berubah / berbeda dari asumsi | Teratasi | Pin `@opencode/plugin@2.2.0`, dual-exist dengan v1 tanpa collision |
+| R2 | Nama field `event.input` berbeda dari v1 | Teratasi | `normalizeToolInput` + pemetaan `shell -> bash` |
+| R3 | Workspace daemon ≠ TUI → hash IPC berbeda | Teratasi | Path absolut + logging `ipcDir` startup di kedua sisi |
+| R4 | Test regresi oleh edit shared | Teratasi | 683/683 tests hijau (26 files, +30 tests baru) |
+| R5 | Daemon hidup tanpa TUI + ask → tool hang | Teratasi | Heartbeat check fail-closed diverifikasi live di v2 |
+| R6 | Multi-TUI saling timpa heartbeat | Teratasi | Per-PID heartbeat `tui-heartbeat-<pid>.json` implemented & tested |
+| R7 | Migrasi config `tui.json`→`cli.json` | Teratasi | Layout package direktori terverifikasi live; README updated |
 
 ### Dihindari dengan sengaja (bukan bagian port ini)
 
